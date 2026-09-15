@@ -1,0 +1,32 @@
+{
+  "config": {
+    "steps": 300,
+    "batch_size": 64,
+    "hidden_dim": 32,
+    "output_dim": 8,
+    "num_experts": 8,
+    "rank": 4,
+    "train_size": 2048,
+    "val_size": 512,
+    "lr": 0.1,
+    "router_lr": 0.01,
+    "damping": 0.01,
+    "temperature": 1.0,
+    "log_every": 10,
+    "device": "auto",
+    "threads": 1
+  },
+  "mode": "moe-riemannian",
+  "top_k": 8,
+  "seed": 1,
+  "initial_val_loss": 0.8962480425834656,
+  "final_val_loss": 0.6163708567619324,
+  "final_train_loss": 0.5861450433731079,
+  "tail_train_loss": 0.575206218957901,
+  "final_gate_entropy": 2.069291114807129,
+  "seconds": 1.4101726999997481,
+  "torch_version": "2.14.0+cu126",
+  "python": "3.13.5",
+  "device": "cuda",
+  "device_name": "NVIDIA GeForce RTX 4050 Laptop GPU"
+}
