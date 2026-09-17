@@ -1,7 +1,11 @@
 
 import gc
 import random
+import argparse
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import torch
 
 from torch.utils.data import DataLoader
@@ -19,7 +23,6 @@ MAX_LENGTH = 256
 
 RANK = 4
 NUM_EXPERTS = 20
-TOP_K = 10
 
 EXPERT_LR = 3e-5
 GATE_LR = 3e-8
@@ -129,6 +132,7 @@ def evaluate(model, loader, max_batches=100):
 
 def run_experiment(
     mode,
+    top_k,
     train_tok,
     val_tok,
     tokenizer,
@@ -152,7 +156,7 @@ def run_experiment(
         model,
         rank=RANK,
         num_experts=NUM_EXPERTS,
-        top_k=TOP_K,
+        top_k=top_k,
         alpha=8.0,
         mode=mode,
     )
@@ -231,6 +235,7 @@ def run_experiment(
 
             print(
                 f"{mode:15s} | "
+                f"K={top_k} | "
                 f"step {step+1:03d} | "
                 f"train={avg_train:.4f} | "
                 f"val={val_loss:.4f}"
@@ -245,6 +250,22 @@ def run_experiment(
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--mode",
+        choices=["riemannian", "moe-riemannian"],
+        required=True,
+    )
+
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        required=True,
+    )
+
+    args = parser.parse_args()
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
@@ -258,24 +279,28 @@ if __name__ == "__main__":
     train_tok = tokenize_dataset(train_ds, tokenizer)
     val_tok = tokenize_dataset(val_ds, tokenizer)
 
-    print("\n=== RSGD ===")
-    rsgd_train, rsgd_val = run_experiment(
-        "riemannian",
-        train_tok,
-        val_tok,
-        tokenizer,
+    train_losses, val_history = run_experiment(
+        mode=args.mode,
+        top_k=args.top_k,
+        train_tok=train_tok,
+        val_tok=val_tok,
+        tokenizer=tokenizer,
     )
 
-    print("\n=== gRSGD ===")
-    grsgd_train, grsgd_val = run_experiment(
-        "moe-riemannian",
-        train_tok,
-        val_tok,
-        tokenizer,
+    output_dir = Path("results/real_task/topk")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    method = (
+        "grsgd"
+        if args.mode == "moe-riemannian"
+        else "rsgd"
     )
 
-    print("\nRSGD validation:")
-    print(rsgd_val)
+    output_path = output_dir / f"{method}_k{args.top_k}.csv"
 
-    print("\ngRSGD validation:")
-    print(grsgd_val)
+    pd.DataFrame(val_history).to_csv(
+        output_path,
+        index=False,
+    )
+
+    print(f"\nSaved result to: {output_path}")
