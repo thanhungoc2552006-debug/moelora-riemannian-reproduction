@@ -1,0 +1,281 @@
+
+import gc
+import random
+import numpy as np
+import torch
+
+from torch.utils.data import DataLoader
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+from prepare_scienceqa import load_scienceqa
+from moe_lora import inject_moe_lora
+from riemannian_sgd import RiemannianSGD
+
+
+MODEL_NAME = "meta-llama/Llama-3.2-3B"
+
+SEED = 42
+MAX_LENGTH = 256
+
+RANK = 4
+NUM_EXPERTS = 20
+TOP_K = 10
+
+EXPERT_LR = 3e-5
+GATE_LR = 3e-8
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def tokenize_dataset(dataset, tokenizer):
+
+    def tokenize_example(example):
+        prompt_ids = tokenizer(
+            example["prompt"],
+            add_special_tokens=True,
+            truncation=True,
+            max_length=MAX_LENGTH,
+        )["input_ids"]
+
+        target_ids = tokenizer(
+            example["target"],
+            add_special_tokens=False,
+            truncation=True,
+            max_length=32,
+        )["input_ids"]
+
+        input_ids = (prompt_ids + target_ids)[:MAX_LENGTH]
+
+        labels = (
+            [-100] * len(prompt_ids)
+            + target_ids
+        )[:MAX_LENGTH]
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": [1] * len(input_ids),
+            "labels": labels,
+        }
+
+    return dataset.map(
+        tokenize_example,
+        remove_columns=dataset.column_names,
+    )
+
+
+def make_collate_fn(tokenizer):
+
+    def collate_fn(batch):
+        max_len = max(len(x["input_ids"]) for x in batch)
+
+        input_ids = []
+        attention_mask = []
+        labels = []
+
+        for x in batch:
+            pad_len = max_len - len(x["input_ids"])
+
+            input_ids.append(
+                x["input_ids"]
+                + [tokenizer.pad_token_id] * pad_len
+            )
+
+            attention_mask.append(
+                x["attention_mask"]
+                + [0] * pad_len
+            )
+
+            labels.append(
+                x["labels"]
+                + [-100] * pad_len
+            )
+
+        return {
+            "input_ids": torch.tensor(input_ids),
+            "attention_mask": torch.tensor(attention_mask),
+            "labels": torch.tensor(labels),
+        }
+
+    return collate_fn
+
+
+@torch.no_grad()
+def evaluate(model, loader, max_batches=100):
+    model.eval()
+
+    losses = []
+
+    for i, batch in enumerate(loader):
+        if i >= max_batches:
+            break
+
+        batch = {
+            k: v.to(model.device)
+            for k, v in batch.items()
+        }
+
+        loss = model(**batch).loss
+        losses.append(loss.item())
+
+    model.train()
+
+    return float(np.mean(losses))
+
+
+def run_experiment(
+    mode,
+    train_tok,
+    val_tok,
+    tokenizer,
+    num_steps=100,
+    eval_every=20,
+):
+
+    set_seed(SEED)
+
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+    )
+
+    model.config.use_cache = False
+
+    set_seed(SEED)
+
+    inject_moe_lora(
+        model,
+        rank=RANK,
+        num_experts=NUM_EXPERTS,
+        top_k=TOP_K,
+        alpha=8.0,
+        mode=mode,
+    )
+
+    collate_fn = make_collate_fn(tokenizer)
+
+    generator = torch.Generator()
+    generator.manual_seed(SEED)
+
+    train_loader = DataLoader(
+        train_tok,
+        batch_size=1,
+        shuffle=True,
+        generator=generator,
+        collate_fn=collate_fn,
+    )
+
+    val_loader = DataLoader(
+        val_tok,
+        batch_size=1,
+        shuffle=False,
+        collate_fn=collate_fn,
+    )
+
+    expert_optimizer = RiemannianSGD(
+        model,
+        lr=EXPERT_LR,
+        reg=1e-6,
+    )
+
+    gate_params = [
+        p for name, p in model.named_parameters()
+        if ".gate." in name and p.requires_grad
+    ]
+
+    gate_optimizer = torch.optim.SGD(
+        gate_params,
+        lr=GATE_LR,
+    )
+
+    train_losses = []
+    val_history = []
+
+    model.train()
+
+    for step, batch in enumerate(train_loader):
+
+        if step >= num_steps:
+            break
+
+        batch = {
+            k: v.to(model.device)
+            for k, v in batch.items()
+        }
+
+        expert_optimizer.zero_grad()
+        gate_optimizer.zero_grad(set_to_none=True)
+
+        loss = model(**batch).loss
+        loss.backward()
+
+        expert_optimizer.step()
+        gate_optimizer.step()
+
+        train_losses.append(loss.item())
+
+        if (step + 1) % eval_every == 0:
+            avg_train = np.mean(train_losses[-eval_every:])
+            val_loss = evaluate(model, val_loader)
+
+            val_history.append({
+                "step": step + 1,
+                "train_loss": float(avg_train),
+                "val_loss": val_loss,
+            })
+
+            print(
+                f"{mode:15s} | "
+                f"step {step+1:03d} | "
+                f"train={avg_train:.4f} | "
+                f"val={val_loss:.4f}"
+            )
+
+    del model
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    return train_losses, val_history
+
+
+if __name__ == "__main__":
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+
+    train_ds, val_ds = load_scienceqa(
+        train_size=1000,
+        val_size=200,
+        seed=SEED,
+    )
+
+    train_tok = tokenize_dataset(train_ds, tokenizer)
+    val_tok = tokenize_dataset(val_ds, tokenizer)
+
+    print("\n=== RSGD ===")
+    rsgd_train, rsgd_val = run_experiment(
+        "riemannian",
+        train_tok,
+        val_tok,
+        tokenizer,
+    )
+
+    print("\n=== gRSGD ===")
+    grsgd_train, grsgd_val = run_experiment(
+        "moe-riemannian",
+        train_tok,
+        val_tok,
+        tokenizer,
+    )
+
+    print("\nRSGD validation:")
+    print(rsgd_val)
+
+    print("\ngRSGD validation:")
+    print(grsgd_val)
