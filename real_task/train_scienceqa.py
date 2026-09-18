@@ -14,6 +14,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from prepare_scienceqa import load_scienceqa
 from moe_lora import inject_moe_lora
 from riemannian_sgd import RiemannianSGD
+from diagnostics import compute_diagnostics
 
 
 MODEL_NAME = "meta-llama/Llama-3.2-3B"
@@ -181,6 +182,9 @@ def run_experiment(
         collate_fn=collate_fn,
     )
 
+    # Same validation sample is used for diagnostics
+    diagnostic_batch = next(iter(val_loader))
+
     expert_optimizer = RiemannianSGD(
         model,
         lr=EXPERT_LR,
@@ -227,10 +231,16 @@ def run_experiment(
             avg_train = np.mean(train_losses[-eval_every:])
             val_loss = evaluate(model, val_loader)
 
+            diagnostics = compute_diagnostics(
+                model,
+                diagnostic_batch,
+            )
+
             val_history.append({
                 "step": step + 1,
                 "train_loss": float(avg_train),
                 "val_loss": val_loss,
+                **diagnostics,
             })
 
             print(
@@ -238,7 +248,10 @@ def run_experiment(
                 f"K={top_k} | "
                 f"step {step+1:03d} | "
                 f"train={avg_train:.4f} | "
-                f"val={val_loss:.4f}"
+                f"val={val_loss:.4f} | "
+                f"BA={diagnostics['ba_cosine']:.3f} | "
+                f"OUT={diagnostics['output_cosine']:.3f} | "
+                f"H={diagnostics['gate_entropy_norm']:.3f}"
             )
 
     del model
