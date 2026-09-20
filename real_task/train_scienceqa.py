@@ -14,7 +14,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from prepare_scienceqa import load_scienceqa
 from moe_lora import inject_moe_lora
 from riemannian_sgd import RiemannianSGD
-from diagnostics import compute_diagnostics
+from diagnostics import compute_diagnostics, compute_update_cosine
 
 
 MODEL_NAME = "meta-llama/Llama-3.2-3B"
@@ -222,6 +222,13 @@ def run_experiment(
         loss = model(**batch).loss
         loss.backward()
 
+        update_cosine = None
+        if (step + 1) % eval_every == 0:
+            update_cosine = compute_update_cosine(
+                model,
+                reg=1e-6,
+            )
+
         expert_optimizer.step()
         gate_optimizer.step()
 
@@ -240,6 +247,7 @@ def run_experiment(
                 "step": step + 1,
                 "train_loss": float(avg_train),
                 "val_loss": val_loss,
+                "update_cosine": update_cosine,
                 **diagnostics,
             })
 
@@ -251,6 +259,7 @@ def run_experiment(
                 f"val={val_loss:.4f} | "
                 f"BA={diagnostics['ba_cosine']:.3f} | "
                 f"OUT={diagnostics['output_cosine']:.3f} | "
+                f"UPD={update_cosine:.3f} | "
                 f"H={diagnostics['gate_entropy_norm']:.3f}"
             )
 
