@@ -4,23 +4,7 @@ import math
 import torch
 from torch import nn
 
-
-MODES = ("riemannian", "moe-riemannian")
-
-
-def weight_expert(g, expert_output, mode):
-    if mode == "riemannian":
-        # Backward contributes g; the forward mixture contributes another g to
-        # the induced output update (fixed gate, first order): the g^2 issue.
-        return g * expert_output
-    if mode == "moe-riemannian":
-        # detach changes only the expert Jacobian: d weighted/d expert = sqrt(g).
-        # The gate derivative remains expert_output. This is a surrogate
-        # backward, not the mathematical derivative of the unchanged forward.
-        sqrt_g_const = torch.sqrt(g).detach()
-        expert_const = expert_output.detach()
-        return sqrt_g_const * expert_output + (g - sqrt_g_const) * expert_const
-    raise ValueError(f"Unknown mode: {mode}")
+from moelora_core import MODES, weight_expert
 
 
 class MoELoRA(nn.Module):

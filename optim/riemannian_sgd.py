@@ -1,21 +1,16 @@
 """Damped per-expert Riemannian SGD; no router parameters here."""
 import torch
 
+from moelora_core import precondition_lora_pair
+
 
 def pair_norm(a, b):
     return (a.square().sum(dim=(-2, -1)) + b.square().sum(dim=(-2, -1))).sqrt()
 
 
 def precondition(A, B, grad_A, grad_B, damping):
-    # Riemannian preconditioners, independently batched over expert pairs:
-    # dA = solve(B^T B + lambda I, grad_A)
-    # dB = grad_B (A A^T + lambda I)^-1, implemented as a transposed solve.
-    eye = torch.eye(A.shape[-2], device=A.device, dtype=A.dtype)
-    gram_B = B.transpose(-1, -2) @ B + damping * eye
-    gram_A = A @ A.transpose(-1, -2) + damping * eye
-    dA = torch.linalg.solve(gram_B, grad_A)
-    dB = torch.linalg.solve(gram_A, grad_B.transpose(-1, -2)).transpose(-1, -2)
-    return dA, dB
+    """Backward-compatible alias for the shared Riemannian primitive."""
+    return precondition_lora_pair(A, B, grad_A, grad_B, damping)
 
 
 class RiemannianSGD(torch.optim.Optimizer):

@@ -11,10 +11,10 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from prepare_scienceqa import load_scienceqa
-from moe_lora import inject_moe_lora
-from riemannian_sgd import RiemannianSGD
-from diagnostics import compute_diagnostics, compute_update_cosine
+from real_task.prepare_scienceqa import load_scienceqa
+from real_task.moe_lora import inject_moe_lora
+from real_task.riemannian_sgd import RiemannianSGD
+from real_task.diagnostics import compute_diagnostics, compute_update_cosine
 
 
 MODEL_NAME = "meta-llama/Llama-3.2-3B"

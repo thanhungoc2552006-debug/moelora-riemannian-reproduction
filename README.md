@@ -63,8 +63,9 @@ Both directions are computed from the same pre-update factors.
 
 ```text
 .
+├── moelora_core.py              # Shared gate-rescaling + Riemannian math
 ├── models/
-│   └── moe_lora.py              # Synthetic MoE-LoRA implementation
+│   └── moe_lora.py              # Synthetic MoE-LoRA wrapper
 ├── optim/
 │   └── riemannian_sgd.py        # Synthetic Riemannian optimizer
 ├── real_task/
@@ -84,7 +85,7 @@ Both directions are computed from the same pre-update factors.
 └── requirements.txt
 ```
 
-The synthetic and LLM implementations are intentionally still separated. A future refactor can unify their common core after the experimental protocol is stabilized.
+The synthetic and LLM model wrappers remain separate because their tensor/layout and integration concerns differ. Their two scientifically important primitives—gate-rescaled expert weighting and Riemannian LoRA preconditioning—live in `moelora_core.py`, so the two experiment tracks cannot silently drift to different equations.
 
 ## Installation
 
@@ -169,8 +170,8 @@ The real-task experiment injects MoE-LoRA into the `q_proj`, `k_proj`, `v_proj`,
 Example:
 
 ```bash
-python real_task/train_scienceqa.py --mode riemannian --top_k 4
-python real_task/train_scienceqa.py --mode moe-riemannian --top_k 4
+python -m real_task.train_scienceqa --mode riemannian --top_k 4
+python -m real_task.train_scienceqa --mode moe-riemannian --top_k 4
 ```
 
 Current defaults include rank 4, 20 experts, expert learning rate `3e-5`, gate learning rate `3e-8`, and a text-only ScienceQA subset.

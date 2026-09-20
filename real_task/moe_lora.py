@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from moelora_core import MODES, weight_expert
+
 
 class MoELoRALinear(nn.Module):
     """
@@ -29,8 +31,10 @@ class MoELoRALinear(nn.Module):
     ):
         super().__init__()
 
-        assert top_k <= num_experts
-        assert mode in {"riemannian", "moe-riemannian"}
+        if not 1 <= top_k <= num_experts:
+            raise ValueError("Require 1 <= top_k <= num_experts")
+        if mode not in MODES:
+            raise ValueError(f"Unknown optimization mode: {mode!r}")
 
         self.base_layer = base_layer
         self.rank = rank
@@ -102,16 +106,11 @@ class MoELoRALinear(nn.Module):
 
             gate_i = g[..., i].unsqueeze(-1)
 
-            if self.mode == "moe-riemannian":
-                sqrt_g = torch.sqrt(gate_i).detach()
-                expert_const = expert_output.detach()
-
-                weighted = (
-                    sqrt_g * expert_output
-                    + (gate_i - sqrt_g) * expert_const
-                )
-            else:
-                weighted = gate_i * expert_output
+            weighted = weight_expert(
+                gate_i,
+                expert_output,
+                self.mode,
+            )
 
             # Llama backbone remains BF16
             result = result + weighted.to(result.dtype)

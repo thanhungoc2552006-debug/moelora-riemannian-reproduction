@@ -1,6 +1,9 @@
 
 import torch
 
+from moelora_core import precondition_lora_pair
+from real_task.moe_lora import MoELoRALinear
+
 
 class RiemannianSGD:
     """
@@ -19,7 +22,7 @@ class RiemannianSGD:
         self.pairs = []
 
         for module in model.modules():
-            if module.__class__.__name__ == "MoELoRALinear":
+            if isinstance(module, MoELoRALinear):
                 for A, B in zip(module.lora_A, module.lora_B):
                     self.pairs.append((A.weight, B.weight))
 
@@ -32,27 +35,13 @@ class RiemannianSGD:
             grad_A = A.grad
             grad_B = B.grad
 
-            r = A.shape[0]
-
-            I = torch.eye(
-                r,
-                device=A.device,
-                dtype=A.dtype,
-            )
-
-            gram_B = B.T @ B + self.reg * I
-            gram_A = A @ A.T + self.reg * I
-
-            # Avoid explicit inverse
-            grad_A_scaled = torch.linalg.solve(
-                gram_B,
+            grad_A_scaled, grad_B_scaled = precondition_lora_pair(
+                A,
+                B,
                 grad_A,
+                grad_B,
+                self.reg,
             )
-
-            grad_B_scaled = torch.linalg.solve(
-                gram_A,
-                grad_B.T,
-            ).T
 
             A.add_(grad_A_scaled, alpha=-self.lr)
             B.add_(grad_B_scaled, alpha=-self.lr)
