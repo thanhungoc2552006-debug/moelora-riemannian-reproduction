@@ -39,13 +39,9 @@ def set_seed(seed):
 def tokenize_dataset(dataset, tokenizer):
 
     def tokenize_example(example):
-        prompt_ids = tokenizer(
-            example["prompt"],
-            add_special_tokens=True,
-            truncation=True,
-            max_length=MAX_LENGTH,
-        )["input_ids"]
-
+        # Tokenize the answer first and reserve space for it. Truncating the
+        # prompt to MAX_LENGTH before appending the answer can silently produce
+        # examples whose labels are entirely -100 (no supervised target).
         target_ids = tokenizer(
             example["target"],
             add_special_tokens=False,
@@ -53,12 +49,29 @@ def tokenize_dataset(dataset, tokenizer):
             max_length=32,
         )["input_ids"]
 
-        input_ids = (prompt_ids + target_ids)[:MAX_LENGTH]
+        if not target_ids:
+            raise ValueError("ScienceQA target tokenized to an empty sequence.")
 
-        labels = (
-            [-100] * len(prompt_ids)
-            + target_ids
-        )[:MAX_LENGTH]
+        max_prompt_length = MAX_LENGTH - len(target_ids)
+        if max_prompt_length <= 0:
+            raise ValueError(
+                f"Target length {len(target_ids)} leaves no room for the prompt "
+                f"under MAX_LENGTH={MAX_LENGTH}."
+            )
+
+        prompt_ids = tokenizer(
+            example["prompt"],
+            add_special_tokens=True,
+            truncation=True,
+            max_length=max_prompt_length,
+        )["input_ids"]
+
+        input_ids = prompt_ids + target_ids
+        labels = [-100] * len(prompt_ids) + target_ids
+
+        assert len(input_ids) == len(labels)
+        assert len(input_ids) <= MAX_LENGTH
+        assert any(label != -100 for label in labels)
 
         return {
             "input_ids": input_ids,
