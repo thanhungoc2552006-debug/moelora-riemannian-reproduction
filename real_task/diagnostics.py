@@ -2,6 +2,9 @@
 import math
 import torch
 
+from moelora_core import precondition_lora_pair
+from real_task.moe_lora import MoELoRALinear
+
 
 EPS = 1e-12
 
@@ -114,7 +117,7 @@ def compute_diagnostics(model, batch):
         (name, module)
         for name, module in model.named_modules()
         if name.endswith("q_proj")
-        and module.__class__.__name__ == "MoELoRALinear"
+        and isinstance(module, MoELoRALinear)
     ]
 
     output_sims = []
@@ -216,27 +219,14 @@ def _pairwise_update_cosine(module, reg=1e-6):
         grad_A = A_layer.weight.grad.detach().float()
         grad_B = B_layer.weight.grad.detach().float()
 
-        r = A.shape[0]
-
-        I = torch.eye(
-            r,
-            device=A.device,
-            dtype=A.dtype,
-        )
-
-        gram_B = B.T @ B + reg * I
-        gram_A = A @ A.T + reg * I
-
-        # Same Riemannian preconditioning as optimizer
-        dA = torch.linalg.solve(
-            gram_B,
+        # Same shared Riemannian preconditioning as the optimizer.
+        dA, dB = precondition_lora_pair(
+            A,
+            B,
             grad_A,
+            grad_B,
+            reg,
         )
-
-        dB = torch.linalg.solve(
-            gram_A,
-            grad_B.T,
-        ).T
 
         # dW = dB A + B dA
         #    = [dB, B] [A; dA]
@@ -308,7 +298,7 @@ def compute_update_cosine(model, reg=1e-6):
 
         if (
             name.endswith("q_proj")
-            and module.__class__.__name__ == "MoELoRALinear"
+            and isinstance(module, MoELoRALinear)
         ):
 
             value = _pairwise_update_cosine(
