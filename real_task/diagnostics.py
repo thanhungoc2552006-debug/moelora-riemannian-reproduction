@@ -188,3 +188,138 @@ def compute_diagnostics(model, batch):
             sum(output_sims) / len(output_sims)
         ),
     }
+
+
+@torch.no_grad()
+def _pairwise_update_cosine(module, reg=1e-6):
+    """
+    Mean cosine similarity between Riemannian update directions
+    of effective LoRA matrices W_i = B_i A_i.
+
+    First-order:
+        dW_i = dB_i A_i + B_i dA_i
+
+    Must be computed after backward() and before optimizer.step().
+    """
+
+    factors = []
+    eps = 1e-12
+
+    for A_layer, B_layer in zip(module.lora_A, module.lora_B):
+
+        if A_layer.weight.grad is None or B_layer.weight.grad is None:
+            continue
+
+        A = A_layer.weight.detach().float()
+        B = B_layer.weight.detach().float()
+
+        grad_A = A_layer.weight.grad.detach().float()
+        grad_B = B_layer.weight.grad.detach().float()
+
+        r = A.shape[0]
+
+        I = torch.eye(
+            r,
+            device=A.device,
+            dtype=A.dtype,
+        )
+
+        gram_B = B.T @ B + reg * I
+        gram_A = A @ A.T + reg * I
+
+        # Same Riemannian preconditioning as optimizer
+        dA = torch.linalg.solve(
+            gram_B,
+            grad_A,
+        )
+
+        dB = torch.linalg.solve(
+            gram_A,
+            grad_B.T,
+        ).T
+
+        # dW = dB A + B dA
+        #    = [dB, B] [A; dA]
+        U = torch.cat([dB, B], dim=1)
+        V = torch.cat([A, dA], dim=0)
+
+        factors.append((U, V))
+
+    if len(factors) < 2:
+        return float("nan")
+
+    norms = []
+
+    for U, V in factors:
+
+        norm_sq = torch.sum(
+            (U.T @ U) * (V @ V.T).T
+        )
+
+        norms.append(
+            torch.sqrt(
+                norm_sq.clamp_min(eps)
+            )
+        )
+
+    similarities = []
+
+    for i in range(len(factors)):
+
+        Ui, Vi = factors[i]
+
+        for j in range(i + 1, len(factors)):
+
+            Uj, Vj = factors[j]
+
+            inner = torch.sum(
+                (Ui.T @ Uj)
+                * (Vi @ Vj.T)
+            )
+
+            denom = (
+                norms[i] * norms[j]
+            ).clamp_min(eps)
+
+            similarities.append(
+                (inner / denom).item()
+            )
+
+    return (
+        sum(similarities)
+        / len(similarities)
+    )
+
+
+@torch.no_grad()
+def compute_update_cosine(model, reg=1e-6):
+    """
+    Average expert-update cosine across q_proj MoE-LoRA layers.
+
+    Call:
+        loss.backward()
+        compute_update_cosine(...)
+        optimizer.step()
+    """
+
+    values = []
+
+    for name, module in model.named_modules():
+
+        if (
+            name.endswith("q_proj")
+            and module.__class__.__name__ == "MoELoRALinear"
+        ):
+
+            value = _pairwise_update_cosine(
+                module,
+                reg=reg,
+            )
+
+            if not math.isnan(value):
+                values.append(value)
+
+    if not values:
+        return float("nan")
+
+    return sum(values) / len(values)
