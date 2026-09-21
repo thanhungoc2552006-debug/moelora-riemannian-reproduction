@@ -1,2 +1,0 @@
-# Includes the base package and the optional Hugging Face experiment stack.
--e .[scienceqa]

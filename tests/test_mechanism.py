@@ -4,9 +4,9 @@ import unittest
 
 import torch
 
-from moelora_repro.synthetic.model import MoELoRA, MODES, weight_expert
-from moelora_repro.synthetic.optimizer import RiemannianSGD, precondition
-from moelora_repro.synthetic.train import (mean_output_pairwise_cosine, mean_vector_pairwise_cosine,
+from moelora_synthetic.model import MoELoRA, MODES, weight_expert
+from moelora_synthetic.optimizer import RiemannianSGD, precondition
+from moelora_synthetic.train import (mean_output_pairwise_cosine, mean_vector_pairwise_cosine,
                    similarity_diagnostics)
 
 

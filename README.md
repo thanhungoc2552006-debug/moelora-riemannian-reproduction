@@ -1,135 +1,119 @@
 # MoE-LoRA Riemannian Reproduction
 
-An independent, ongoing reproduction study of **RSGD and gate-rescaled gRSGD**
-for mixtures of low-rank experts, based on
-[A Stronger Mixture of Low-Rank Experts for Fine-Tuning Foundation Models](https://arxiv.org/abs/2502.15828).
+An independent reproduction study of **RSGD and gate-rescaled gRSGD for LLM
+fine-tuning**, based on [A Stronger Mixture of Low-Rank Experts for Fine-Tuning
+Foundation Models](https://arxiv.org/abs/2502.15828).
 The authors' implementation is [THUDM/MoELoRA_Riemannian](https://github.com/THUDM/MoELoRA_Riemannian).
 
-This repository contains controlled synthetic experiments and a text-only
-ScienceQA extension using Llama-3.2-3B. The stored results describe these local
-protocols; they do not establish reproduction of the paper's benchmark scores.
+The main experiment adapts **Llama-3.2-3B on text-only ScienceQA**. Controlled
+synthetic experiments provide supporting checks of gradients, routing and
+optimization; their code, recipes, results and explanations are collected in
+[experiments/synthetic/](experiments/synthetic/README.md).
 
-[Hướng dẫn làm việc bằng tiếng Việt](docs/workflow.vi.md) ·
-[Experiment protocols](docs/reproduction.md) ·
-[Results index](results/README.md) ·
-[Code layout and migration](docs/structure.md)
+**Status: reproduction in progress.** These local protocols and historical
+results do not establish reproduction of the paper's benchmark scores. The
+existing ScienceQA target-truncation issue and other protocol gaps are described
+in [the reproduction notes](docs/reproduction.md).
 
-## Experiment tracks
+[Hướng dẫn tiếng Việt](docs/workflow.vi.md) ·
+[LLM results](results/README.md) ·
+[Protocols and limitations](docs/reproduction.md) ·
+[Code layout](docs/structure.md)
 
-| Track | Purpose | Archived evidence |
-| --- | --- | --- |
-| Synthetic regression | Check routing, expert gradients, and paired RSGD/gRSGD updates | 3 seeds × 4 values of K × 2 modes |
-| Synthetic expert similarity | Compare expert output, BA, and gradient cosine at K=4/8 | 5 seeds × 2 values of K × 2 modes |
-| ScienceQA pilot | Short text-only training and expert diagnostics | Pilot and K=4/8 CSVs and figures |
-| ScienceQA long run | One-epoch K=10 training and generated-answer accuracy | Two histories and final summaries, 814 optimizer steps each |
+## Run the LLM experiments
 
-## Install
-
-Python **3.10+**. Run these commands from the repository root, preferably in a
-virtual environment. Install the appropriate CUDA build of PyTorch first if
-you will train on a GPU.
-
-```bash
-git clone https://github.com/thanhungoc2552006-debug/moelora-riemannian-reproduction.git
-cd moelora-riemannian-reproduction
-python -m pip install -e .
-```
-
-The base install runs synthetic experiments without downloading a model or
-dataset. For ScienceQA, also install the optional dependencies:
+Python **3.10+**. From the repository root, preferably inside a virtual environment:
 
 ```bash
 python -m pip install -e ".[scienceqa]"
 ```
 
-ScienceQA training needs access to `meta-llama/Llama-3.2-3B` on Hugging Face and
-sufficient GPU memory. The long-run driver requires CUDA. Keep model access
-tokens in your local Hugging Face login, outside the repository.
+Install the appropriate CUDA build of PyTorch for your machine. ScienceQA
+training requires access to `meta-llama/Llama-3.2-3B` on Hugging Face and sufficient
+GPU memory; the long-run driver explicitly requires CUDA. Keep access tokens in
+your local Hugging Face login, outside this repository.
 
-`requirements.txt` and `requirements-scienceqa.txt` remain available as install
-shortcuts. All dependency definitions are maintained in `pyproject.toml`.
-
-## Quick start
-
-Run the CPU tests and a small end-to-end sweep:
+First inspect the effective configuration without downloading data or training:
 
 ```bash
-python -m unittest discover -s tests -v
-python -m moelora_repro.run --config configs/synthetic/smoke.json
-```
-
-Run a complete synthetic recipe or inspect a ScienceQA recipe:
-
-```bash
-python -m moelora_repro.run --config configs/synthetic/main.json
-python -m moelora_repro.run --config configs/synthetic/expert_similarity.json
 python -m moelora_repro.run --config configs/scienceqa/long_grsgd_k10.json --dry-run
 ```
 
-Override a setting without editing or duplicating training code:
+Run either method on a prepared GPU machine:
 
 ```bash
-python -m moelora_repro.run --config configs/synthetic/main.json --set device=cpu --set steps=100
-python -m moelora_repro.run --config configs/scienceqa/pilot_rsgd_k4.json --set top_k=8 --set seed=43
+python -m moelora_repro.run --config configs/scienceqa/long_rsgd_k10.json
+python -m moelora_repro.run --config configs/scienceqa/long_grsgd_k10.json
 ```
 
-Each recipe invocation creates a fresh `outputs/<recipe>/<run-id>/` directory
-containing `recipe.json`, `manifest.json`, `console.log`, and the driver's
-CSV/JSON/figure outputs. The manifest records the code and recipe Git commits,
-dirty-worktree flags, installed dependency versions, command, timestamps, and
-exit status. `--out` can choose another **new** directory; existing directories
-are refused. `--dry-run` only displays the effective recipe.
+The pilot recipes run a shorter experiment. Override a supported parameter
+without copying training code:
 
+```bash
+python -m moelora_repro.run --config configs/scienceqa/pilot_grsgd_k4.json --set top_k=8 --set seed=43
+```
+
+Each run creates a fresh `outputs/<recipe>/<run-id>/` directory with the effective
+`recipe.json`, `manifest.json`, `console.log` and driver outputs. The manifest
+records code/recipe commits, dirty-worktree flags, installed dependency versions,
+command, timestamps and exit status. An explicit `--out` must name a new directory.
 The installed `moelora-run` command is equivalent to `python -m moelora_repro.run`.
+
+## Recorded LLM results
+
+The archived one-epoch ScienceQA K=10 runs use 20 experts, rank 4, microbatch 2,
+gradient accumulation 4 and 814 optimizer steps. The text-only test set contains
+2,224 examples.
+
+| Method | Final validation loss | Test accuracy | Correct / total |
+| --- | ---: | ---: | ---: |
+| RSGD | 0.10825 | 71.18% | 1,583 / 2,224 |
+| gRSGD | 0.08315 | 77.79% | 1,730 / 2,224 |
+
+Source: [committed final comparison](results/scienceqa/long_run/k10_longrun_final_comparison.csv).
+These are one-run historical observations with no multi-seed uncertainty estimate.
+They were preserved during the repository reorganization, not regenerated.
+See [the results index](results/README.md) for the pilot and Top-K diagnostics.
 
 ## Repository layout
 
-| Location | What belongs here |
+| Location | Purpose |
 | --- | --- |
-| `src/moelora_repro/synthetic/` | Synthetic model, optimizer, training, sweeps and plots |
-| `src/moelora_repro/scienceqa/` | ScienceQA model injection, data, diagnostics, pilot and long-run training |
-| `configs/` | Named, runnable JSON experiment recipes |
-| `results/synthetic/` | Curated synthetic results already committed to Git |
-| `results/scienceqa/` | Curated pilot, Top-K and long-run ScienceQA results |
-| `docs/` | Protocols, scientific interpretation and contributor workflow |
-| `tests/` | Mechanism regression tests and experiment-runner checks |
-| `outputs/` | Local runs and logs; ignored by Git |
+| `src/moelora_repro/scienceqa/` | Main LLM implementation: adapters, optimization, data, diagnostics and training |
+| `src/moelora_repro/run.py` | Common experiment launcher and provenance recording |
+| `configs/scienceqa/` | LLM pilot and long-run recipes |
+| `results/scienceqa/` | Curated historical LLM results |
+| `experiments/synthetic/` | Supporting synthetic study, including its code, configs, results and documentation |
+| `docs/` | Protocols, migration guide and contributor workflow |
+| `tests/` | Mechanism and workflow checks |
+| `outputs/` | Local run outputs, ignored by Git |
 
-The four historical training commands remain as small compatibility wrappers
-after installing the package. New commands and imports should use the package;
-see the [migration table](docs/structure.md).
+`pyproject.toml` is the single source for package installation and dependencies.
+The old root training scripts and `real_task/` wrappers have been removed.
+Use the recipe launcher or the [documented module commands](docs/structure.md).
 
-## Recorded results
+## Supporting synthetic checks
 
-Synthetic validation MSE, taken from the committed
-[aggregate CSV](results/synthetic/main/aggregate.csv):
+The small regression experiments isolate routing and optimizer behavior without
+loading an LLM. Everything needed to inspect that study is in
+[experiments/synthetic/](experiments/synthetic/README.md), including its two
+archived result sets and detailed mechanism notes.
 
-| K | RSGD | gRSGD | Mean paired MSE reduction |
-| --- | ---: | ---: | ---: |
-| 1 | 0.73915 | 0.73915 | 0.00% |
-| 2 | 0.57654 | 0.54514 | 5.35% |
-| 4 | 0.64738 | 0.58914 | 8.98% |
-| 8 | 0.78362 | 0.74844 | 4.44% |
+A CPU-only check from the repository root:
 
-The archived ScienceQA K=10 long-run summaries report **71.18%** for RSGD
-(1,583/2,224) and **77.79%** for gRSGD (1,730/2,224). See the
-[final comparison](results/scienceqa/long_run/k10_longrun_final_comparison.csv).
-These are one-run historical observations, with no multi-seed uncertainty estimate.
+```bash
+python -m pip install -e .
+python -m unittest discover -s tests -v
+python -m moelora_repro.run --config experiments/synthetic/configs/smoke.json
+```
 
-Historical artifacts are preserved as recorded. In particular, the ScienceQA
-training tokenizers can truncate away supervised answer tokens for long prompts;
-this existing limitation must be resolved and rerun before stronger benchmark
-claims. The [protocol notes](docs/reproduction.md) separate verified mechanism
-checks, historical measurements, and remaining reproduction gaps.
+## Add the next LLM experiment
 
-## Adding the next experiment
+1. Create a named recipe in `configs/scienceqa/` and commit the code/configuration.
+2. Run it through the launcher and inspect the saved status, metrics and diagnostics.
+3. Copy a reviewed run into `results/scienceqa/<experiment>/` with its provenance.
+4. Add a short interpretation using the [experiment template](docs/experiment-template.md)
+   and register it in the [LLM results index](results/README.md).
 
-1. Copy the nearest recipe into `configs/` and give it a descriptive name.
-2. Commit the code and recipe; run it with the recipe runner.
-3. Inspect the manifest, metrics and diagnostics.
-4. Copy a complete result folder into `results/<track>/<experiment>/`, add a
-   short interpretation using the [result template](docs/experiment-template.md),
-   and update the [results index](results/README.md).
-
-Detailed equations and the original synthetic research notes are retained in
-[docs/synthetic.md](docs/synthetic.md).
+Supporting synthetic recipes and curated results stay inside
+`experiments/synthetic/`. See [the Vietnamese workflow](docs/workflow.vi.md).

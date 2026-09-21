@@ -1,82 +1,99 @@
-# Cách làm việc với repo từ bây giờ
+# Làm việc với repo theo trọng tâm LLM
 
-## Quy ước chính
+Phần chính là fine-tune Llama trên ScienceQA. Phần synthetic hỗ trợ kiểm chứng
+cơ chế và được gom trọn trong [experiments/synthetic/](../experiments/synthetic/README.md).
 
-| Bạn muốn thêm gì? | Đặt ở đâu? |
+## Tìm và sửa đúng chỗ
+
+| Bạn cần làm gì? | Mở ở đâu? |
 | --- | --- |
-| Sửa model, optimizer, cách train synthetic | `src/moelora_repro/synthetic/` |
-| Sửa code ScienceQA | `src/moelora_repro/scienceqa/` |
-| Thử K, seed hoặc số bước khác | Tạo/sửa recipe trong `configs/`, hoặc dùng `--set` |
-| Kết quả vừa chạy | `outputs/`; runner tự tạo thư mục riêng |
-| Kết quả đã kiểm tra và muốn đưa lên GitHub | `results/<track>/<tên-thí-nghiệm>/` |
-| Giải thích cơ chế hoặc ghi chú protocol | `docs/` |
+| Sửa model, optimizer hoặc training LLM | `src/moelora_repro/scienceqa/` |
+| Thay K, seed hoặc ngân sách chạy LLM | `configs/scienceqa/` |
+| Xem kết quả LLM đã lưu | `results/scienceqa/` |
+| Đọc, chạy hoặc sửa thí nghiệm synthetic | `experiments/synthetic/` |
+| Xem các lần chạy mới trên máy | `outputs/` |
+| Hiểu protocol và giới hạn so với paper | `docs/reproduction.md` |
 
-Không cần tạo thêm `train_final.py`, `train_new.py`, `train_v2.py` mỗi khi đổi
-K hay seed. Thay các tham số đã được hỗ trợ trong recipe, giữ code chạy ở một
-chỗ. Khi đổi hẳn protocol, đặt tên thí nghiệm mới và ghi rõ điểm khác biệt.
+Trong folder synthetic đã có code, `configs/`, `results/`, README và
+`mechanism.md`. Bạn không cần tìm phần này ở nhiều nhánh thư mục khác nhau.
+Các kiểm thử vẫn ở `tests/` để chạy chung bằng một lệnh.
 
-## 1. Cài và kiểm tra
+## 1. Cài đặt
 
-Từ thư mục repo, dùng Python 3.10 trở lên:
+Từ thư mục gốc repo, với Python 3.10 trở lên:
 
 ```bash
-python -m pip install -e .
+python -m pip install -e ".[scienceqa]"
+```
+
+Nếu chỉ chạy synthetic trên CPU, dùng `python -m pip install -e .`.
+Nếu đã cài bản cấu trúc trước, chạy lại lệnh cài để Python nhận vị trí package mới.
+Hai file `requirements*.txt` trung gian đã bỏ; các dependency nằm trong
+`pyproject.toml`.
+
+Với Colab/Jupyter, chuyển thư mục tới repo rồi dùng `%pip install -e ".[scienceqa]"`.
+ScienceQA cần GPU phù hợp và quyền tải model từ Hugging Face.
+
+## 2. Chọn cấu hình rồi chạy
+
+Ví dụ xem cấu hình gRSGD dài hạn ở K=10:
+
+```bash
+python -m moelora_repro.run --config configs/scienceqa/long_grsgd_k10.json --dry-run
+```
+
+Lệnh này chỉ hiện cấu hình. Bỏ `--dry-run` để thực sự tải model/dữ liệu và train.
+Đọc [các giới hạn protocol](reproduction.md), đặc biệt vấn đề cắt mất token đáp án,
+trước khi dùng lần chạy mới để kết luận về chất lượng reproduce.
+
+Đổi K và seed của một pilot mà không tạo thêm file train:
+
+```bash
+python -m moelora_repro.run --config configs/scienceqa/pilot_grsgd_k4.json --set top_k=8 --set seed=43
+```
+
+Nếu muốn lưu thí nghiệm lâu dài, copy recipe sang tên mới, đổi trường `name` và
+commit code/cấu hình trước khi chạy. Chỉ sửa những tham số driver có hỗ trợ;
+rank, số expert và learning rate ScienceQA hiện vẫn là các hằng số trong code.
+
+Runner tạo thư mục mới dưới `outputs/`, lưu `recipe.json`, `manifest.json`,
+`console.log` và các kết quả của driver. Tên thư mục dựa trên tên recipe; đọc
+`recipe.json` để biết tham số thực tế sau khi áp dụng `--set`.
+`--out outputs/my_run_01` cho phép đặt tên riêng nhưng thư mục phải chưa tồn tại.
+
+## 3. Kiểm tra và lưu kết quả
+
+Kiểm tra trạng thái trong manifest, loss/metric và diagnostics. Khi một lần chạy
+đã được kiểm tra, copy cả kết quả lẫn cấu hình/log sang đúng nơi:
+
+| Loại thí nghiệm | Nơi lưu kết quả được đưa lên GitHub |
+| --- | --- |
+| LLM/ScienceQA | `results/scienceqa/<tên-thí-nghiệm>/` |
+| Synthetic | `experiments/synthetic/results/<tên-thí-nghiệm>/` |
+
+Thêm README theo [mẫu thí nghiệm](experiment-template.md), ghi câu hỏi nghiên cứu,
+setting, seed, kết quả và giới hạn. Cập nhật đúng danh mục:
+[kết quả LLM](../results/README.md) hoặc
+[kết quả synthetic](../experiments/synthetic/results/README.md).
+
+Không tạo thêm `train_final.py` hay `train_v2.py` khi chỉ đổi K/seed. Dataset,
+cache và weights lớn để ngoài Git. CSV/log đã lưu không phải checkpoint để
+resume model nếu Colab ngắt kết nối.
+
+## 4. Chạy kiểm tra nhẹ
+
+```bash
 python -m unittest discover -s tests -v
-python -m moelora_repro.run --config configs/synthetic/smoke.json
+python -m moelora_repro.run --config experiments/synthetic/configs/smoke.json
 ```
 
-Với Colab/Jupyter, dùng `%pip install -e .` sau khi chuyển thư mục tới repo.
-ScienceQA cần thêm `%pip install -e ".[scienceqa]"`, GPU phù hợp và tài khoản
-Hugging Face đã được cấp quyền tải model. Hướng dẫn này không chạy huấn luyện
-ScienceQA giúp bạn trên Colab.
+Lệnh thứ hai chỉ chạy synthetic nhỏ trên CPU, không chạy Llama.
 
-## 2. Thêm một thí nghiệm
+## 5. Những file cũ đã bỏ
 
-Ví dụ muốn chạy gRSGD với K=8, seed=43 trên pilot ScienceQA:
+`train.py`, `experiment.py` ở ngoài cùng và folder `real_task/` từng là các file
+gọi trung gian. Chúng đã được bỏ; toàn bộ code chính vẫn còn ở các vị trí mới.
+Dùng runner như các ví dụ trên hoặc xem [bảng lệnh module](structure.md).
 
-```bash
-python -m moelora_repro.run --config configs/scienceqa/pilot_grsgd_k4.json --set top_k=8 --set seed=43 --dry-run
-```
-
-Lệnh trên chỉ hiển thị cấu hình. Bỏ `--dry-run` để thực sự tải dữ liệu/model và
-train. Nếu đây là thí nghiệm bạn định giữ lâu dài, hãy copy recipe sang tên mới,
-đổi cả trường `name`, rồi commit code và cấu hình trước khi chạy.
-
-Runner tạo một thư mục mới, ví dụ `outputs/scienceqa-pilot-grsgd-k4/<run-id>/`.
-`recipe.json` ghi tham số thực tế sau khi áp dụng `--set`; `manifest.json` ghi
-commit, môi trường và trạng thái; `console.log` ghi log. Tên thư mục tự động dựa
-trên tên recipe, nên khi dùng override cần đọc recipe đi kèm để biết đúng cấu hình.
-Bạn cũng có thể dùng `--out outputs/scienceqa_k8_seed43_run01`; thư mục này phải
-chưa tồn tại để tránh ghi đè kết quả.
-
-## 3. Đưa kết quả lên GitHub
-
-Kiểm tra `manifest.json` có trạng thái `completed`, xem loss/metric có hợp lệ
-không, và đọc diagnostics trước khi kết luận. Với ScienceQA, cần xử lý hạn chế
-tokenization đã ghi trong [protocol](reproduction.md) trước các kết luận mới.
-
-Copy toàn bộ thư mục chạy đã kiểm tra sang `results/`, giữ cả cấu hình và log.
-Thêm README theo [mẫu thí nghiệm](experiment-template.md): câu hỏi nghiên cứu,
-setting, seed, kết quả, diễn giải và giới hạn. Thêm dòng tương ứng vào
-[danh mục kết quả](../results/README.md).
-
-Chỉ stage những đường dẫn có chủ đích. Ví dụ:
-
-```bash
-git add configs/scienceqa/my_experiment.json results/scienceqa/my_experiment results/README.md
-git commit -m "results: add ScienceQA K8 paired-seed comparison"
-```
-
-Thay các tên ví dụ bằng file thực tế của bạn. Dataset, cache, checkpoint và
-weights lớn để ngoài Git. CSV đã lưu trong lúc train không phải checkpoint để
-resume model khi Colab ngắt kết nối.
-
-## 4. Làm việc với nhánh và PR
-
-Đợt tổ chức này nằm trên nhánh `refactor/research-layout`, xuất phát từ `main`
-có các kết quả dài hạn mới nhất tại thời điểm kiểm tra. Mở nhánh này trên GitHub
-để xem cấu trúc mới; `main` chỉ đổi khi bạn quyết định merge PR.
-
-PR #7 và #8 là các thay đổi từ trước. Đợt này không merge hay đóng chúng.
-Do nhiều file được chuyển chỗ, cần đưa các sửa lỗi của chúng sang đường dẫn
-mới trước khi kết hợp. Xem [bảng chuyển đường dẫn và quan hệ PR](structure.md).
+Thay đổi vẫn nằm trên nhánh `refactor/research-layout` trong PR #13; chưa merge
+vào main. Các PR #7/#8 giữ nguyên và cần đối chiếu đường dẫn khi tích hợp sau này.

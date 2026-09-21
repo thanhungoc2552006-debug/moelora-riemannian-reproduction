@@ -30,7 +30,7 @@ protocols.
 The synthetic track uses paired initializations, tasks and minibatch sequences
 across methods within each seed. Its assertions cover forward equality, local
 expert/gate derivatives, routing, preconditioning, frozen weights and finite
-updates. See [the full mechanism notes](synthetic.md).
+updates. See [the full mechanism notes](../experiments/synthetic/mechanism.md).
 
 ## How to interpret the archived evidence
 

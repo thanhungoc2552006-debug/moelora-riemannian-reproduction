@@ -25,4 +25,4 @@ jobs:
       - name: Run mechanism and workflow tests
         run: python -m unittest discover -s tests -v
       - name: Run a small synthetic sweep
-        run: python -m moelora_repro.run --config configs/synthetic/smoke.json
+        run: python -m moelora_repro.run --config experiments/synthetic/configs/smoke.json

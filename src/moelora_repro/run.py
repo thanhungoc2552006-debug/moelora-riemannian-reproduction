@@ -12,8 +12,8 @@ from pathlib import Path
 
 
 ENTRYPOINTS = {
-    "synthetic-sweep": "moelora_repro.synthetic.experiment",
-    "synthetic-run": "moelora_repro.synthetic.train",
+    "synthetic-sweep": "moelora_synthetic.experiment",
+    "synthetic-run": "moelora_synthetic.train",
     "scienceqa-pilot": "moelora_repro.scienceqa.train_pilot",
     "scienceqa-long": "moelora_repro.scienceqa.train",
 }

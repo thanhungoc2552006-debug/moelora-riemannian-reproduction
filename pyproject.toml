@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "moelora-repro"
 version = "0.1.0"
-description = "Controlled MoE-LoRA and Riemannian optimization reproduction experiments"
+description = "LLM MoE-LoRA reproduction with supporting synthetic mechanism experiments"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["torch>=2.1", "matplotlib>=3.7"]
@@ -22,5 +22,10 @@ scienceqa = [
 [project.scripts]
 moelora-run = "moelora_repro.run:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+packages = ["moelora_repro", "moelora_repro.scienceqa", "moelora_synthetic"]
+include-package-data = false
+
+[tool.setuptools.package-dir]
+moelora_repro = "src/moelora_repro"
+moelora_synthetic = "experiments/synthetic"

@@ -4,7 +4,7 @@ Phần synthetic của project PyTorch độc lập để kiểm tra cơ chế M
 gate gradient rescaling. Không dùng HuggingFace/PEFT, model pretrained hay dataset tải ngoài.
 Đây là reproduction cơ chế trên synthetic regression, không phải reproduction điểm benchmark paper.
 
-Đọc [README](../README.md) để xem cả hai track và [workflow](workflow.vi.md)
+Đọc [README của repo](../../README.md) để xem cả hai track và [workflow](../../docs/workflow.vi.md)
 để dùng recipe runner có ghi provenance. Các lệnh dưới đây là lệnh trực tiếp,
 chạy từ thư mục gốc repo; chúng không tự tạo manifest như recipe runner.
 
@@ -15,13 +15,13 @@ Python 3.10+; dependencies: PyTorch và Matplotlib. Từ thư mục project:
 ```powershell
 python -m pip install -e .
 python -m unittest discover -s tests -v
-python -m moelora_repro.synthetic.experiment --steps 300 --seeds 0 1 2 --device auto --out outputs/synthetic/main
+python -m moelora_synthetic.experiment --steps 300 --seeds 0 1 2 --device auto --out outputs/synthetic/main
 ```
 
 Trên RTX 4050 với PyTorch bản CUDA đã được cài:
 
 ```powershell
-python -m moelora_repro.synthetic.experiment --device cuda --steps 300 --seeds 0 1 2 --out outputs/synthetic/cuda
+python -m moelora_synthetic.experiment --device cuda --steps 300 --seeds 0 1 2 --out outputs/synthetic/cuda
 ```
 
 `auto` dùng CUDA nếu khả dụng, nếu không dùng CPU. `cuda` báo lỗi rõ nếu không khả dụng.
@@ -31,21 +31,21 @@ Không có mixed precision để tránh làm nhiễu các phép solve và so sá
 Chạy một setting hoặc giảm tải:
 
 ```powershell
-python -m moelora_repro.synthetic.train --mode moe-riemannian --top-k 4 --steps 300 --device cpu --out outputs/synthetic/single
-python -m moelora_repro.synthetic.experiment --steps 200 --seeds 0 --hidden-dim 16 --rank 2 --batch-size 32 --out outputs/synthetic/small
+python -m moelora_synthetic.train --mode moe-riemannian --top-k 4 --steps 300 --device cpu --out outputs/synthetic/single
+python -m moelora_synthetic.experiment --steps 200 --seeds 0 --hidden-dim 16 --rank 2 --batch-size 32 --out outputs/synthetic/small
 ```
 
 ## File
 
 | File | Vai trò |
 |---|---|
-| `src/moelora_repro/synthetic/model.py` | Frozen Linear, LoRA experts, Top-K router, hai backward |
-| `src/moelora_repro/synthetic/optimizer.py` | Hai batched solve độc lập theo expert, simultaneous SGD |
-| `src/moelora_repro/synthetic/train.py` | Synthetic teacher, paired RNG, train/validation, CSV/JSON |
-| `src/moelora_repro/synthetic/experiment.py` | Sweep Top-K × mode × seed, aggregate, ba plot |
+| `experiments/synthetic/model.py` | Frozen Linear, LoRA experts, Top-K router, hai backward |
+| `experiments/synthetic/optimizer.py` | Hai batched solve độc lập theo expert, simultaneous SGD |
+| `experiments/synthetic/train.py` | Synthetic teacher, paired RNG, train/validation, CSV/JSON |
+| `experiments/synthetic/experiment.py` | Sweep Top-K × mode × seed, aggregate, ba plot |
 | `tests/test_mechanism.py` | Kiểm tra Jacobian, routing, optimizer, finite update |
 | `pyproject.toml` | Dependency cơ bản: torch và matplotlib |
-| `results/synthetic/main/` | Kết quả 24 runs đã lưu; môi trường từng run nằm trong JSON |
+| `experiments/synthetic/results/main/` | Kết quả 24 runs đã lưu; môi trường từng run nằm trong JSON |
 
 ## Kiến trúc và task
 
@@ -156,7 +156,7 @@ trong từng cặp seed, không phải phần trăm tính từ hai mean loss.
 
 ## Kết quả đã chạy
 
-Bảng dưới lấy từ `results/synthetic/main/aggregate.csv` đã commit: 3 seeds × 4 K × 2 modes × 300 steps.
+Bảng dưới lấy từ `experiments/synthetic/results/main/aggregate.csv` đã commit: 3 seeds × 4 K × 2 modes × 300 steps.
 Các JSON hiện có ghi PyTorch 2.14.0+cu126, Python 3.13.5 và NVIDIA GeForce RTX 4050 Laptop GPU.
 Đây là metadata lịch sử trong file; đợt tổ chức repo không chạy lại hay xác nhận môi trường đó.
 
@@ -209,7 +209,7 @@ Run the unchanged baseline model while measuring three diagnostics every 20 step
 on the same 256-example validation batch:
 
 ```powershell
-python -m moelora_repro.synthetic.experiment --steps 300 --seeds 0 1 2 3 4 --top-ks 4 8 `
+python -m moelora_synthetic.experiment --steps 300 --seeds 0 1 2 3 4 --top-ks 4 8 `
   --similarity-every 20 --diagnostic-size 256 --device cuda `
   --out outputs/synthetic/expert_similarity
 ```
