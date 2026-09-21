@@ -1,2 +1,10 @@
+# Core synthetic experiments
 torch>=2.1
 matplotlib>=3.7
+numpy>=1.24
+pandas>=2.0
+
+# ScienceQA / Llama experiment
+transformers>=4.45
+datasets>=2.19
+accelerate>=0.30
