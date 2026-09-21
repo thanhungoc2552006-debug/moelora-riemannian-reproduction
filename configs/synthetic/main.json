@@ -1,0 +1,34 @@
+{
+  "name": "synthetic-main",
+  "entrypoint": "synthetic-sweep",
+  "parameters": {
+    "steps": 300,
+    "batch_size": 64,
+    "hidden_dim": 32,
+    "output_dim": 8,
+    "num_experts": 8,
+    "rank": 4,
+    "train_size": 2048,
+    "val_size": 512,
+    "lr": 0.1,
+    "router_lr": 0.01,
+    "damping": 0.01,
+    "temperature": 1.0,
+    "log_every": 10,
+    "similarity_every": 20,
+    "diagnostic_size": 256,
+    "device": "auto",
+    "threads": 1,
+    "top_ks": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "seeds": [
+      0,
+      1,
+      2
+    ]
+  }
+}

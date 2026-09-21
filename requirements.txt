@@ -1,2 +1,2 @@
-torch>=2.1
-matplotlib>=3.7
+# Synthetic experiments. Dependency definitions live in pyproject.toml.
+-e .

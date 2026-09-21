@@ -1,0 +1,14 @@
+{
+  "name": "scienceqa-long-grsgd-k10",
+  "entrypoint": "scienceqa-long",
+  "parameters": {
+    "mode": "moe-riemannian",
+    "top_k": 10,
+    "epochs": 1,
+    "batch_size": 2,
+    "grad_accum": 4,
+    "eval_every": 200,
+    "max_optimizer_steps": null,
+    "seed": 42
+  }
+}
