@@ -1,5 +1,4 @@
 
-from datasets import load_dataset
 
 LETTERS = ["A", "B", "C", "D", "E"]
 
@@ -32,6 +31,8 @@ def load_scienceqa(
     val_size=200,
     seed=42,
 ):
+    from datasets import load_dataset
+
     ds = load_dataset("derek-thomas/ScienceQA")
 
     train_ds = (

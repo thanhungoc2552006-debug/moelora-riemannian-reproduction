@@ -1,0 +1,11 @@
+{
+  "name": "scienceqa-pilot-grsgd-k4",
+  "entrypoint": "scienceqa-pilot",
+  "parameters": {
+    "mode": "moe-riemannian",
+    "top_k": 4,
+    "num_steps": 100,
+    "eval_every": 20,
+    "seed": 42
+  }
+}

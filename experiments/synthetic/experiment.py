@@ -9,12 +9,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 
-try:
-    from .models.moe_lora import MODES, weight_expert
-    from .train import Config, add_config_args, run, write_csv
-except ImportError:
-    from models.moe_lora import MODES, weight_expert
-    from train import Config, add_config_args, run, write_csv
+from .model import MODES, weight_expert
+from .train import Config, add_config_args, run, write_csv
 
 LABELS = {"riemannian": "RSGD", "moe-riemannian": "gRSGD"}
 
@@ -169,13 +165,13 @@ def similarity_tail_summary(similarity_runs, top_ks, seeds):
     return rows
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_args(parser)
     parser.add_argument("--top-ks", nargs="+", type=int, default=[1, 2, 4, 8])
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
-    parser.add_argument("--out", type=Path, default=Path("results/main"))
-    args = parser.parse_args()
+    parser.add_argument("--out", type=Path, default=Path("outputs/synthetic/sweep"))
+    args = parser.parse_args(argv)
     if len(set(args.seeds)) != len(args.seeds) or len(set(args.top_ks)) != len(args.top_ks):
         parser.error("Seeds and top-ks must not contain duplicates")
     if any(k < 1 or k > args.num_experts for k in args.top_ks):

@@ -1,3 +1,22 @@
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# New runs stay local until a complete result is curated into results/.
+/outputs/
+/data/
+/checkpoints/
+/wandb/
+*.pt
+*.pth
+*.safetensors

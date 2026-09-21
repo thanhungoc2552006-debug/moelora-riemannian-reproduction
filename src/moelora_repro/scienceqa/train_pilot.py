@@ -5,16 +5,14 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from prepare_scienceqa import load_scienceqa
-from moe_lora import inject_moe_lora
-from riemannian_sgd import RiemannianSGD
-from diagnostics import compute_diagnostics, compute_update_cosine
+from .data import load_scienceqa
+from .model import inject_moe_lora
+from .optimizer import RiemannianSGD
+from .diagnostics import compute_diagnostics, compute_update_cosine
 
 
 MODEL_NAME = "meta-llama/Llama-3.2-3B"
@@ -139,9 +137,12 @@ def run_experiment(
     tokenizer,
     num_steps=100,
     eval_every=20,
+    seed=SEED,
 ):
 
-    set_seed(SEED)
+    from transformers import AutoModelForCausalLM
+
+    set_seed(seed)
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
@@ -151,7 +152,7 @@ def run_experiment(
 
     model.config.use_cache = False
 
-    set_seed(SEED)
+    set_seed(seed)
 
     inject_moe_lora(
         model,
@@ -165,7 +166,7 @@ def run_experiment(
     collate_fn = make_collate_fn(tokenizer)
 
     generator = torch.Generator()
-    generator.manual_seed(SEED)
+    generator.manual_seed(seed)
 
     train_loader = DataLoader(
         train_tok,
@@ -270,7 +271,7 @@ def run_experiment(
     return train_losses, val_history
 
 
-if __name__ == "__main__":
+def main(argv=None):
 
     parser = argparse.ArgumentParser()
 
@@ -281,12 +282,29 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--top_k",
+        "--top-k", "--top_k",
         type=int,
         required=True,
     )
 
-    args = parser.parse_args()
+    parser.add_argument("--out", type=Path, default=Path("outputs/scienceqa/pilot"))
+
+    parser.add_argument("--num-steps", "--num_steps", type=int, default=100)
+    parser.add_argument("--eval-every", "--eval_every", type=int, default=20)
+
+    parser.add_argument("--seed", type=int, default=SEED)
+
+    args = parser.parse_args(argv)
+
+    if not 1 <= args.top_k <= NUM_EXPERTS:
+        parser.error(f"top-k must be between 1 and {NUM_EXPERTS}")
+    if min(args.num_steps, args.eval_every) < 1:
+        parser.error("num-steps and eval-every must be positive")
+    if not 0 <= args.seed < 2**32:
+        parser.error("seed must be in [0, 2**32)")
+
+    import pandas as pd
+    from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
@@ -295,7 +313,7 @@ if __name__ == "__main__":
     train_ds, val_ds = load_scienceqa(
         train_size=1000,
         val_size=200,
-        seed=SEED,
+        seed=args.seed,
     )
 
     train_tok = tokenize_dataset(train_ds, tokenizer)
@@ -307,9 +325,12 @@ if __name__ == "__main__":
         train_tok=train_tok,
         val_tok=val_tok,
         tokenizer=tokenizer,
+        num_steps=args.num_steps,
+        eval_every=args.eval_every,
+        seed=args.seed,
     )
 
-    output_dir = Path("results/real_task/topk")
+    output_dir = args.out
     output_dir.mkdir(parents=True, exist_ok=True)
 
     method = (
@@ -326,3 +347,7 @@ if __name__ == "__main__":
     )
 
     print(f"\nSaved result to: {output_path}")
+
+
+if __name__ == "__main__":
+    main()

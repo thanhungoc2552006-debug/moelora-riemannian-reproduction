@@ -8,15 +8,12 @@ import re
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
-from datasets import load_dataset
 from torch.utils.data import DataLoader
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from moe_lora import inject_moe_lora
-from riemannian_sgd import RiemannianSGD
-from diagnostics import compute_diagnostics, compute_update_cosine
+from .model import inject_moe_lora
+from .optimizer import RiemannianSGD
+from .diagnostics import compute_diagnostics, compute_update_cosine
 
 
 # ============================================================
@@ -95,7 +92,9 @@ def get_answer_letter(example):
 # Dataset
 # ============================================================
 
-def load_scienceqa():
+def load_scienceqa(seed=SEED):
+
+    from datasets import load_dataset
 
     ds = load_dataset(
         "derek-thomas/ScienceQA"
@@ -116,7 +115,7 @@ def load_scienceqa():
     )
 
     train_ds = train_ds.shuffle(
-        seed=SEED
+        seed=seed
     )
 
     print(
@@ -460,9 +459,14 @@ def run_experiment(
     grad_accum,
     eval_every,
     max_optimizer_steps=None,
+    out="outputs/scienceqa/long_run",
+    seed=SEED,
 ):
 
-    set_seed(SEED)
+    import pandas as pd
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    set_seed(seed)
 
     tokenizer = (
         AutoTokenizer
@@ -477,7 +481,7 @@ def run_experiment(
         )
 
     train_raw, val_raw, test_raw = (
-        load_scienceqa()
+        load_scienceqa(seed=seed)
     )
 
     train_tok = (
@@ -499,7 +503,7 @@ def run_experiment(
     )
 
     generator = torch.Generator()
-    generator.manual_seed(SEED)
+    generator.manual_seed(seed)
 
     train_loader = DataLoader(
         train_tok,
@@ -587,9 +591,7 @@ def run_experiment(
     # Output
     # ----------------------------------------
 
-    output_dir = Path(
-        "results/real_task/long_run"
-    )
+    output_dir = Path(out)
 
     output_dir.mkdir(
         parents=True,
@@ -871,6 +873,7 @@ def run_experiment(
     # ========================================================
 
     summary = {
+        "seed": seed,
         "model": MODEL_NAME,
         "mode": mode,
         "num_experts": NUM_EXPERTS,
@@ -962,7 +965,7 @@ def run_experiment(
 # CLI
 # ============================================================
 
-if __name__ == "__main__":
+def main(argv=None):
 
     parser = argparse.ArgumentParser()
 
@@ -976,7 +979,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--top_k",
+        "--top-k", "--top_k",
         type=int,
         default=10,
     )
@@ -988,32 +991,47 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--batch_size",
+        "--batch-size", "--batch_size",
         type=int,
         default=2,
     )
 
     parser.add_argument(
-        "--grad_accum",
+        "--grad-accum", "--grad_accum",
         type=int,
         default=4,
     )
 
     parser.add_argument(
-        "--eval_every",
+        "--eval-every", "--eval_every",
         type=int,
         default=200,
     )
 
     parser.add_argument(
-        "--max_optimizer_steps",
+        "--max-optimizer-steps", "--max_optimizer_steps",
         type=int,
         default=None,
     )
 
-    args = parser.parse_args()
+    parser.add_argument("--out", type=Path, default=Path("outputs/scienceqa/long_run"))
+
+    parser.add_argument("--seed", type=int, default=SEED)
+
+    args = parser.parse_args(argv)
+
+    if not 1 <= args.top_k <= NUM_EXPERTS:
+        parser.error(f"top-k must be between 1 and {NUM_EXPERTS}")
+    if min(args.epochs, args.batch_size, args.grad_accum, args.eval_every) < 1:
+        parser.error("epochs, batch-size, grad-accum and eval-every must be positive")
+    if args.max_optimizer_steps is not None and args.max_optimizer_steps < 1:
+        parser.error("max-optimizer-steps must be positive")
+    if not 0 <= args.seed < 2**32:
+        parser.error("seed must be in [0, 2**32)")
 
     run_experiment(
+        out=args.out,
+        seed=args.seed,
         mode=args.mode,
         top_k=args.top_k,
         epochs=args.epochs,
@@ -1024,3 +1042,7 @@ if __name__ == "__main__":
             args.max_optimizer_steps
         ),
     )
+
+
+if __name__ == "__main__":
+    main()

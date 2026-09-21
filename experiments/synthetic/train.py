@@ -10,13 +10,8 @@ from pathlib import Path
 
 import torch
 
-try:
-    from .models.moe_lora import MoELoRA, MODES
-    from .optim.riemannian_sgd import RiemannianSGD
-except ImportError:
-    from models.moe_lora import MoELoRA, MODES
-    from optim.riemannian_sgd import RiemannianSGD
-
+from .model import MoELoRA, MODES
+from .optimizer import RiemannianSGD
 
 @dataclass
 class Config:
@@ -222,13 +217,17 @@ def add_config_args(parser):
         parser.add_argument("--" + name.replace("_", "-"), type=type(value), default=value)
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_args(parser)
     parser.add_argument("--mode", choices=MODES, default=MODES[0])
     parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--out", default="results/single")
-    args = parser.parse_args()
+    parser.add_argument("--out", default="outputs/synthetic/single")
+    args = parser.parse_args(argv)
     run(Config(**{key: getattr(args, key) for key in asdict(Config())}),
         args.mode, args.top_k, args.seed, args.out)
+
+
+if __name__ == "__main__":
+    main()

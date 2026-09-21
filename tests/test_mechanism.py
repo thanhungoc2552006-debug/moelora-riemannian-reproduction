@@ -4,9 +4,9 @@ import unittest
 
 import torch
 
-from models.moe_lora import MoELoRA, MODES, weight_expert
-from optim.riemannian_sgd import RiemannianSGD, precondition
-from train import (mean_output_pairwise_cosine, mean_vector_pairwise_cosine,
+from moelora_synthetic.model import MoELoRA, MODES, weight_expert
+from moelora_synthetic.optimizer import RiemannianSGD, precondition
+from moelora_synthetic.train import (mean_output_pairwise_cosine, mean_vector_pairwise_cosine,
                    similarity_diagnostics)
 
 

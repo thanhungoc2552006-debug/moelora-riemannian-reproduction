@@ -1,0 +1,31 @@
+{
+  "name": "synthetic-smoke",
+  "entrypoint": "synthetic-sweep",
+  "parameters": {
+    "steps": 5,
+    "batch_size": 8,
+    "hidden_dim": 8,
+    "output_dim": 4,
+    "num_experts": 4,
+    "rank": 2,
+    "train_size": 64,
+    "val_size": 32,
+    "lr": 0.1,
+    "router_lr": 0.01,
+    "damping": 0.01,
+    "temperature": 1.0,
+    "log_every": 1,
+    "similarity_every": 2,
+    "diagnostic_size": 16,
+    "device": "cpu",
+    "threads": 1,
+    "top_ks": [
+      1,
+      2,
+      4
+    ],
+    "seeds": [
+      0
+    ]
+  }
+}
