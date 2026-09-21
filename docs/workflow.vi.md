@@ -95,5 +95,5 @@ Lệnh thứ hai chỉ chạy synthetic nhỏ trên CPU, không chạy Llama.
 gọi trung gian. Chúng đã được bỏ; toàn bộ code chính vẫn còn ở các vị trí mới.
 Dùng runner như các ví dụ trên hoặc xem [bảng lệnh module](structure.md).
 
-Thay đổi vẫn nằm trên nhánh `refactor/research-layout` trong PR #13; chưa merge
-vào main. Các PR #7/#8 giữ nguyên và cần đối chiếu đường dẫn khi tích hợp sau này.
+Các đường dẫn trước khi tổ chức lại repo và ghi chú tích hợp code cũ nằm trong
+[lịch sử thay đổi](history.md).

@@ -50,8 +50,8 @@ reorganized package.
 - Both existing ScienceQA training tokenizers concatenate prompt and answer
   before enforcing the sequence limit. A sufficiently long prompt can remove
   every supervised answer token, leaving labels entirely `-100`. Fix both paths,
-  test long prompts explicitly, and give reruns a new experiment name. Earlier
-  PR #7 addresses the pilot path only.
+  test long prompts explicitly, and give reruns a new experiment name. See
+  [development history](history.md) for earlier fixes and porting notes.
 - Model and dataset revisions are not pinned in the historical drivers. New
   manifests record Python dependencies and the code commit, but do not make
   unpinned remote model/data revisions immutable.
