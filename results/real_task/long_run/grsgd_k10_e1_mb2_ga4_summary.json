@@ -1,0 +1,16 @@
+{
+  "model": "meta-llama/Llama-3.2-3B",
+  "mode": "moe-riemannian",
+  "num_experts": 20,
+  "top_k": 10,
+  "rank": 4,
+  "epochs": 1,
+  "batch_size": 2,
+  "grad_accum": 4,
+  "effective_batch": 8,
+  "optimizer_steps": 814,
+  "accuracy": 0.7778776978417267,
+  "correct": 1730,
+  "total": 2224,
+  "invalid_predictions": 0
+}
