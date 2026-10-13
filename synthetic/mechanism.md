@@ -4,7 +4,7 @@ Phần synthetic của project PyTorch độc lập để kiểm tra cơ chế M
 gate gradient rescaling. Không dùng HuggingFace/PEFT, model pretrained hay dataset tải ngoài.
 Đây là reproduction cơ chế trên synthetic regression, không phải reproduction điểm benchmark paper.
 
-Đọc [README của repo](../../README.md) để xem cả hai track và [workflow](../../docs/workflow.vi.md)
+Đọc [README của repo](../README.md) để xem cả hai track và [workflow](../docs/workflow.vi.md)
 để dùng recipe runner có ghi provenance. Các lệnh dưới đây là lệnh trực tiếp,
 chạy từ thư mục gốc repo; chúng không tự tạo manifest như recipe runner.
 
@@ -39,13 +39,13 @@ python -m moelora_synthetic.experiment --steps 200 --seeds 0 --hidden-dim 16 --r
 
 | File | Vai trò |
 |---|---|
-| `experiments/synthetic/model.py` | Frozen Linear, LoRA experts, Top-K router, hai backward |
-| `experiments/synthetic/optimizer.py` | Hai batched solve độc lập theo expert, simultaneous SGD |
-| `experiments/synthetic/train.py` | Synthetic teacher, paired RNG, train/validation, CSV/JSON |
-| `experiments/synthetic/experiment.py` | Sweep Top-K × mode × seed, aggregate, ba plot |
+| `synthetic/model.py` | Frozen Linear, LoRA experts, Top-K router, hai backward |
+| `synthetic/optimizer.py` | Hai batched solve độc lập theo expert, simultaneous SGD |
+| `synthetic/train.py` | Synthetic teacher, paired RNG, train/validation, CSV/JSON |
+| `synthetic/experiment.py` | Sweep Top-K × mode × seed, aggregate, ba plot |
 | `tests/test_mechanism.py` | Kiểm tra Jacobian, routing, optimizer, finite update |
 | `pyproject.toml` | Dependency cơ bản: torch và matplotlib |
-| `experiments/synthetic/results/main/` | Kết quả 24 runs đã lưu; môi trường từng run nằm trong JSON |
+| `synthetic/results/main/` | Kết quả 24 runs đã lưu; môi trường từng run nằm trong JSON |
 
 ## Kiến trúc và task
 
@@ -156,7 +156,7 @@ trong từng cặp seed, không phải phần trăm tính từ hai mean loss.
 
 ## Kết quả đã chạy
 
-Bảng dưới lấy từ `experiments/synthetic/results/main/aggregate.csv` đã commit: 3 seeds × 4 K × 2 modes × 300 steps.
+Bảng dưới lấy từ `synthetic/results/main/aggregate.csv` đã commit: 3 seeds × 4 K × 2 modes × 300 steps.
 Các JSON hiện có ghi PyTorch 2.14.0+cu126, Python 3.13.5 và NVIDIA GeForce RTX 4050 Laptop GPU.
 Đây là metadata lịch sử trong file; đợt tổ chức repo không chạy lại hay xác nhận môi trường đó.
 

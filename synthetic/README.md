@@ -2,7 +2,7 @@
 
 This directory collects the entire synthetic study: its model, optimizer,
 training/sweep scripts, configurations, archived results and mechanism notes.
-The main repository focuses on [LLM fine-tuning on ScienceQA](../../README.md).
+The main repository focuses on [LLM fine-tuning on ScienceQA](../README.md).
 
 The synthetic setup uses a small frozen linear map, LoRA experts and generated
 regression data. It checks local gradients, routing invariants and optimizer
@@ -25,9 +25,9 @@ does not reproduce the paper's benchmark scores.
 
 ```bash
 python -m pip install -e .
-python -m moelora_repro.run --config experiments/synthetic/configs/smoke.json
-python -m moelora_repro.run --config experiments/synthetic/configs/main.json
-python -m moelora_repro.run --config experiments/synthetic/configs/expert_similarity.json
+python -m moelora_repro.run --config synthetic/configs/smoke.json
+python -m moelora_repro.run --config synthetic/configs/main.json
+python -m moelora_repro.run --config synthetic/configs/expert_similarity.json
 ```
 
 | Recipe | Settings |
@@ -65,5 +65,5 @@ The 123 existing synthetic CSV/JSON/PNG files keep their original contents.
 The new recipe paths do not imply that the historical data was generated with
 this launcher. Read [the mechanism notes](mechanism.md) for interpretation.
 
-Mechanism tests remain in the common [tests directory](../../tests/test_mechanism.py)
-so repository CI can exercise the complete workflow with one test command.
+Mechanism tests live in [tests/](tests/test_mechanism.py). Run them with
+`python -m unittest discover -s synthetic/tests -v` from the repository root.

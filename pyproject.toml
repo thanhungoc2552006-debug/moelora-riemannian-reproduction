@@ -28,4 +28,4 @@ include-package-data = false
 
 [tool.setuptools.package-dir]
 moelora_repro = "src/moelora_repro"
-moelora_synthetic = "experiments/synthetic"
+moelora_synthetic = "synthetic"

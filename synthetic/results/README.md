@@ -14,5 +14,5 @@ retroactive provenance for these old runs.
 
 For a new study, copy the reviewed run and its recipe/manifest/logs into a named
 subdirectory here, then add an interpretation using the
-[experiment template](../../../docs/experiment-template.md). Register it in this
-index; LLM results have their [own index](../../../results/README.md).
+[experiment template](../../docs/experiment-template.md). Register it in this
+index; LLM results have their [own index](../../results/README.md).

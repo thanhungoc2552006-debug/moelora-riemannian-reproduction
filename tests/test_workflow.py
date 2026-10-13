@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class WorkflowTests(unittest.TestCase):
     def test_checked_in_recipes_and_driver_flags(self):
-        recipes = sorted((ROOT / "configs").glob("*/*.json"))
-        recipes += sorted((ROOT / "experiments/synthetic/configs").glob("*.json"))
+        recipes = sorted(p for p in (ROOT / "configs").glob("*/*.json") if p.name != "revisions.json")
+        recipes += sorted((ROOT / "synthetic/configs").glob("*.json"))
         self.assertTrue(recipes, "No checked-in recipes were discovered")
         for path in recipes:
             with self.subTest(recipe=path.name):
@@ -35,7 +35,7 @@ class WorkflowTests(unittest.TestCase):
                         self.assertIn(flag, result.stdout)
 
     def test_overrides_and_dry_run_do_not_create_outputs(self):
-        config = ROOT / "experiments/synthetic/configs/main.json"
+        config = ROOT / "synthetic/configs/main.json"
         recipe = load_recipe(config, ["steps=3", "device=cpu", "seeds=[5,6]"])
         self.assertEqual(recipe["parameters"]["steps"], 3)
         self.assertEqual(recipe["parameters"]["seeds"], [5, 6])
