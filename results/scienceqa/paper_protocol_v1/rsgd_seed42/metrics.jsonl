@@ -1,0 +1,6 @@
+{"step": 300, "epoch": 3, "train_loss": 0.09546519699506462, "validation_loss": 0.1045144721205388, "validation_accuracy_first256": {"accuracy": 0.56640625, "correct": 145, "total": 256, "invalid_predictions": 2}}
+{"step": 400, "epoch": 4, "train_loss": 0.1129077598452568, "validation_loss": 0.09911987704829549, "validation_accuracy_first256": {"accuracy": 0.60546875, "correct": 155, "total": 256, "invalid_predictions": 1}}
+{"step": 500, "epoch": 6, "train_loss": 0.09347778507508338, "validation_loss": 0.09564411078246116, "validation_accuracy_first256": {"accuracy": 0.60546875, "correct": 155, "total": 256, "invalid_predictions": 1}}
+{"step": 600, "epoch": 7, "train_loss": 0.09027470462024212, "validation_loss": 0.09350927543840301, "validation_accuracy_first256": {"accuracy": 0.6171875, "correct": 158, "total": 256, "invalid_predictions": 1}}
+{"step": 700, "epoch": 8, "train_loss": 0.10915646646171809, "validation_loss": 0.09122563891439463, "validation_accuracy_first256": {"accuracy": 0.62109375, "correct": 159, "total": 256, "invalid_predictions": 1}}
+{"step": 800, "epoch": 9, "train_loss": 0.10893949763849378, "validation_loss": 0.09025402777696223, "validation_accuracy_first256": {"accuracy": 0.6484375, "correct": 166, "total": 256, "invalid_predictions": 1}}

@@ -1,0 +1,21 @@
+diff --git a/src/moelora_repro/scienceqa/model.py b/src/moelora_repro/scienceqa/model.py
+index d78fc4d..ebac670 100644
+--- a/src/moelora_repro/scienceqa/model.py
++++ b/src/moelora_repro/scienceqa/model.py
+@@ -72,6 +72,7 @@ class MoELoRALinear(nn.Module):
+ 
+         # Keep for later diagnostics
+         self.last_gate = None
++        self.dropout = nn.Dropout(0.05)
+ 
+     def forward(self, x):
+         result = self.base_layer(x)
+@@ -97,7 +98,7 @@ class MoELoRALinear(nn.Module):
+ 
+         for i in range(self.num_experts):
+             expert_output = self.lora_B[i](
+-                self.lora_A[i](x_lora)
++                self.lora_A[i](self.dropout(x_lora))
+             ) * self.scaling
+ 
+             gate_i = g[..., i].unsqueeze(-1)

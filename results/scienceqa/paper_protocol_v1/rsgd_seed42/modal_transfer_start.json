@@ -1,0 +1,9 @@
+{
+  "step": 250,
+  "epoch": 3,
+  "next_batch": 160,
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "python": "3.13.1 (main, Dec 19 2024, 14:32:25) [Clang 18.1.8 ]",
+  "torch": "2.11.0+cu130",
+  "cuda": "13.0"
+}

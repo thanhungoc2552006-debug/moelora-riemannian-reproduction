@@ -30,3 +30,7 @@ Keep independent seeds/methods separate and large weights/datasets outside Git.
 
 The supporting synthetic results are collected separately in
 [experiments/synthetic/results/](../experiments/synthetic/results/README.md).
+
+## October 2026 Drive runs
+
+[Paper protocol variant, seed 42](scienceqa/paper_protocol_v1/README.md): RSGD 62.54%, gRSGD 69.24%; 800 updates, effective batch 80; source snapshots and functional-probe outputs.

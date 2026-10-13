@@ -45,7 +45,7 @@ provide uncertainty over seeds or reproduce a multimodal/full benchmark score.
 The result files are historical evidence, not output from a new run of the
 reorganized package.
 
-## Known gaps to resolve before new scientific claims
+## Known gaps in the earlier packaged protocols
 
 - Both existing ScienceQA training tokenizers concatenate prompt and answer
   before enforcing the sequence limit. A sufficiently long prompt can remove
@@ -67,3 +67,7 @@ reorganized package.
 The layout change preserves the optimizer math, routing, tokenization and
 evaluation behavior. A separate algorithm/protocol change should document its
 effect on comparison with these archived results.
+
+## Updated Drive protocol
+
+The newer train_paper driver reserves answer space, pins revisions, saves resumable checkpoints and uses paper hyperparameters. Earlier pilot/long-run gaps above still apply to those historical drivers. See [the new report](../results/scienceqa/paper_protocol_v1/README.md).

@@ -59,7 +59,17 @@ records code/recipe commits, dirty-worktree flags, installed dependency versions
 command, timestamps and exit status. An explicit `--out` must name a new directory.
 The installed `moelora-run` command is equivalent to `python -m moelora_repro.run`.
 
-## Recorded LLM results
+## Latest completed ScienceQA runs (Drive, October 2026)
+
+The newer seed-42 paper-hyperparameter protocol variant reports **62.54% RSGD**
+and **69.24% gRSGD** on 2,224 text-only examples after 800 updates.
+It uses corrected answer labels, effective batch 80, alpha 16, dropout 0.05,
+a linear schedule, pinned revisions and resumable checkpoints.
+See [the archived report](results/scienceqa/paper_protocol_v1/README.md)
+for source snapshots, configs, diagnostic coverage and limitations.
+The runs below belong to a separate earlier protocol.
+
+## Historical LLM results (earlier protocol)
 
 The archived one-epoch ScienceQA K=10 runs use 20 experts, rank 4, microbatch 2,
 gradient accumulation 4 and 814 optimizer steps. The text-only test set contains

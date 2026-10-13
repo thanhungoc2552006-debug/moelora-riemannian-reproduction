@@ -26,6 +26,7 @@ class MoELoRALinear(nn.Module):
         top_k: int = 10,
         alpha: float = 8.0,
         mode: str = "riemannian",
+        dropout: float = 0.0,
     ):
         super().__init__()
 
@@ -72,6 +73,7 @@ class MoELoRALinear(nn.Module):
 
         # Keep for later diagnostics
         self.last_gate = None
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         result = self.base_layer(x)
@@ -97,7 +99,7 @@ class MoELoRALinear(nn.Module):
 
         for i in range(self.num_experts):
             expert_output = self.lora_B[i](
-                self.lora_A[i](x_lora)
+                self.lora_A[i](self.dropout(x_lora))
             ) * self.scaling
 
             gate_i = g[..., i].unsqueeze(-1)
@@ -127,6 +129,7 @@ def inject_moe_lora(
     alpha=8.0,
     mode="riemannian",
     target_modules=("q_proj", "k_proj", "v_proj", "o_proj"),
+    dropout=0.0,
 ):
     """
     Replace target Linear modules by MoELoRALinear.
@@ -152,6 +155,7 @@ def inject_moe_lora(
                     top_k=top_k,
                     alpha=alpha,
                     mode=mode,
+                    dropout=dropout,
                 )
 
                 setattr(module, child_name, new_layer)
