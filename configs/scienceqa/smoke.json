@@ -1,0 +1,17 @@
+{
+  "name": "scienceqa-smoke",
+  "entrypoint": "scienceqa",
+  "parameters": {
+    "mode": "moe-riemannian",
+    "steps": 2,
+    "batch_size": 1,
+    "grad_accum": 1,
+    "eval_every": 1,
+    "save_every": 1,
+    "seed": 42,
+    "train_limit": 16,
+    "val_limit": 8,
+    "smoke": true,
+    "revisions": "configs/scienceqa/revisions.json"
+  }
+}

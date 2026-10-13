@@ -14,8 +14,7 @@ from pathlib import Path
 ENTRYPOINTS = {
     "synthetic-sweep": "moelora_synthetic.experiment",
     "synthetic-run": "moelora_synthetic.train",
-    "scienceqa-pilot": "moelora_repro.scienceqa.train_pilot",
-    "scienceqa-long": "moelora_repro.scienceqa.train",
+    "scienceqa": "moelora_repro.scienceqa.train",
 }
 
 
@@ -56,6 +55,10 @@ def parameter_args(parameters):
         if not re.fullmatch(r"[a-z][a-z0-9_]*", key) or key == "out":
             raise ValueError(f"Invalid parameter {key!r}; use --out for output directories")
         if value is None:
+            continue
+        if isinstance(value, bool):
+            if value:
+                arguments.append("--" + key.replace("_", "-"))
             continue
         values = value if isinstance(value, list) else [value]
         if not values or any(type(item) not in (str, int, float) for item in values):

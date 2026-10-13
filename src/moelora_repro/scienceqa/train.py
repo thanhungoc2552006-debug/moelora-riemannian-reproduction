@@ -1,1048 +1,343 @@
+"""Partial ScienceQA reproduction; imports the user's MoE-LoRA and RSGD code.
 
+Paper hyperparameters, BF16 backbone, correctly aligned answer labels.
+This is an explicitly documented protocol variant, not an exact score reproduction.
+"""
 import argparse
 import gc
+import hashlib
+import importlib.metadata
 import json
 import math
+import os
 import random
-import re
+import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
-from .model import inject_moe_lora
-from .optimizer import RiemannianSGD
-from .diagnostics import compute_diagnostics, compute_update_cosine
-
-
-# ============================================================
-# Config
-# ============================================================
-
-MODEL_NAME = "meta-llama/Llama-3.2-3B"
-
-SEED = 42
-MAX_LENGTH = 256
-
-RANK = 4
-NUM_EXPERTS = 20
-
-EXPERT_LR = 3e-5
-GATE_LR = 3e-8
-REG = 1e-6
-
-
-# ============================================================
-# Reproducibility
-# ============================================================
-
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-# ============================================================
-# ScienceQA formatting
-# ============================================================
-
-def build_prompt(example):
-
-    context = example.get("hint", "")
-
-    if context is None or str(context).strip() == "":
-        context = "N/A"
-
-    question = example["question"]
-    choices = example["choices"]
-
-    options = []
-
-    for i, choice in enumerate(choices):
-        letter = chr(ord("A") + i)
-        options.append(f"({letter}) {choice}")
-
-    options = "\n".join(options)
-
-    prompt = (
-        f"Context: {context}\n"
-        f"Question: {question}\n"
-        f"Options:\n{options}\n"
-        f"Answer:"
-    )
-
-    return prompt
-
-
-def build_target(example):
-
-    answer_idx = int(example["answer"])
-    answer_letter = chr(ord("A") + answer_idx)
-
-    return f" The answer is {answer_letter}."
-
-
-def get_answer_letter(example):
-    return chr(ord("A") + int(example["answer"]))
-
-
-# ============================================================
-# Dataset
-# ============================================================
-
-def load_scienceqa(seed=SEED):
-
-    from datasets import load_dataset
-
-    ds = load_dataset(
-        "derek-thomas/ScienceQA"
-    )
-
-    # Keep current reproduction setting:
-    # text-only ScienceQA
-    train_ds = ds["train"].filter(
-        lambda x: x["image"] is None
-    )
-
-    val_ds = ds["validation"].filter(
-        lambda x: x["image"] is None
-    )
-
-    test_ds = ds["test"].filter(
-        lambda x: x["image"] is None
-    )
-
-    train_ds = train_ds.shuffle(
-        seed=seed
-    )
-
-    print(
-        f"Text-only train      : {len(train_ds)}"
-    )
-    print(
-        f"Text-only validation : {len(val_ds)}"
-    )
-    print(
-        f"Text-only test       : {len(test_ds)}"
-    )
-
-    return train_ds, val_ds, test_ds
-
-
-# ============================================================
-# Training tokenization
-# ============================================================
-
-def tokenize_training_dataset(
-    dataset,
-    tokenizer,
-):
-
-    def tokenize(example):
-
-        prompt = build_prompt(example)
-        target = build_target(example)
-
-        prompt_ids = tokenizer(
-            prompt,
-            add_special_tokens=True,
-            truncation=False,
-        )["input_ids"]
-
-        target_ids = tokenizer(
-            target,
-            add_special_tokens=False,
-            truncation=False,
-        )["input_ids"]
-
-        target_ids = (
-            target_ids
-            + [tokenizer.eos_token_id]
-        )
-
-        input_ids = (
-            prompt_ids + target_ids
-        )[:MAX_LENGTH]
-
-        prompt_len = min(
-            len(prompt_ids),
-            len(input_ids),
-        )
-
-        labels = (
-            [-100] * prompt_len
-            + input_ids[prompt_len:]
-        )
-
-        return {
-            "input_ids": input_ids,
-            "attention_mask": (
-                [1] * len(input_ids)
-            ),
-            "labels": labels,
-        }
-
-    return dataset.map(
-        tokenize,
-        remove_columns=dataset.column_names,
-        desc="Tokenizing training data",
-    )
-
-
-def make_collate_fn(tokenizer):
-
-    def collate(batch):
-
-        max_len = max(
-            len(x["input_ids"])
-            for x in batch
-        )
-
-        input_ids = []
-        attention_mask = []
-        labels = []
-
-        for x in batch:
-
-            pad_len = (
-                max_len
-                - len(x["input_ids"])
-            )
-
-            input_ids.append(
-                x["input_ids"]
-                + [tokenizer.pad_token_id]
-                * pad_len
-            )
-
-            attention_mask.append(
-                x["attention_mask"]
-                + [0] * pad_len
-            )
-
-            labels.append(
-                x["labels"]
-                + [-100] * pad_len
-            )
-
-        return {
-            "input_ids": torch.tensor(
-                input_ids,
-                dtype=torch.long,
-            ),
-            "attention_mask": torch.tensor(
-                attention_mask,
-                dtype=torch.long,
-            ),
-            "labels": torch.tensor(
-                labels,
-                dtype=torch.long,
-            ),
-        }
-
-    return collate
-
-
-# ============================================================
-# Validation loss
-# ============================================================
-
-@torch.no_grad()
-def evaluate_loss(
-    model,
-    loader,
-):
-
-    was_training = model.training
-    model.eval()
-
-    losses = []
-
-    for batch in loader:
-
-        batch = {
-            k: v.cuda(
-                non_blocking=True
-            )
-            for k, v in batch.items()
-        }
-
-        outputs = model(**batch)
-
-        losses.append(
-            outputs.loss.item()
-        )
-
-    if was_training:
-        model.train()
-
-    return float(
-        np.mean(losses)
-    )
-
-
-# ============================================================
-# Final QA accuracy
-# ============================================================
-
-def parse_answer(text):
-
-    text = text.upper().strip()
-
-    # Expected:
-    # "THE ANSWER IS B."
-    match = re.search(
-        r"ANSWER\s+IS\s+\(?([A-E])\)?",
-        text,
-    )
-
-    if match:
-        return match.group(1)
-
-    # Also allow direct generation: "B"
-    match = re.match(
-        r"^\s*\(?([A-E])\)?(?:[\s\.\)]|$)",
-        text,
-    )
-
-    if match:
-        return match.group(1)
-
-    return None
+from moelora_repro.scienceqa.model import inject_moe_lora
+from moelora_repro.scienceqa.optimizer import RiemannianSGD
+from .data import make_collate_fn, parse_answer, set_seed
+
+MODEL = 'meta-llama/Llama-3.2-3B'
+DATASET = 'derek-thomas/ScienceQA'
+MAX_LENGTH, PROMPT_BUDGET = 256, 240
+ALPHA, DROPOUT = 16.0, 0.05
+N_EXPERTS, TOP_K, RANK = 20, 10, 4
+EXPERT_LR, GATE_LR, REG = 3e-5, 3e-8, 1e-6
+SCHEDULER_HORIZON = 2222  # int(2000/9*10), as in published source
+PROTOCOL = 'scienceqa-paper-hparams-corrected-labels-bf16-v1'
+
+
+def atomic_json(path, obj):
+    path = Path(path)
+    temp = path.with_name(path.name + '.tmp')
+    temp.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + '\n')
+    os.replace(temp, path)
+
+
+def prompt(ex):
+    context = ex.get('hint') or 'N/A'
+    options = ' '.join(f'({chr(65+i)}) {choice}' for i, choice in enumerate(ex['choices']))
+    instruction = f'Context: {context}\nQuestion: {ex["question"]}\nOptions: {options}\n'
+    return ('Below is an instruction that describes a task. Write a response that '
+            'appropriately completes the request.\n\n### Instruction:\n'
+            + instruction + '\n\n### Response:\n')
+
+
+def prompt_ids(ex, tokenizer):
+    ids = tokenizer(prompt(ex), add_special_tokens=True, truncation=False)['input_ids']
+    # Keep BOS, the end of the question/options and the response marker.
+    # Apply the SAME rule at training and generation.
+    if len(ids) > PROMPT_BUDGET:
+        if ids[0] == tokenizer.bos_token_id:
+            ids = [ids[0]] + ids[-(PROMPT_BUDGET-1):]
+        else:
+            ids = ids[-PROMPT_BUDGET:]
+    return ids
+
+
+def encode_training(ex, tokenizer):
+    pids = prompt_ids(ex, tokenizer)
+    text = f'Answer: The answer is {chr(65+int(ex["answer"]))}.'
+    tids = tokenizer(text, add_special_tokens=False, truncation=False)['input_ids']
+    tids += [tokenizer.eos_token_id]
+    if len(tids) > MAX_LENGTH - PROMPT_BUDGET:
+        raise ValueError('Answer exceeds reserved budget; inspect tokenizer instead of truncating it.')
+    ids = pids + tids
+    labels = [-100]*len(pids) + tids
+    assert len(ids) <= MAX_LENGTH and any(x != -100 for x in labels[1:])
+    return dict(input_ids=ids, attention_mask=[1]*len(ids), labels=labels)
+
+
+def batch_plan(size, batch_size, seed, epoch):
+    generator = torch.Generator().manual_seed(seed + epoch)
+    order = torch.randperm(size, generator=generator).tolist()
+    return [order[i:i+batch_size] for i in range(0, size, batch_size)]
+
+
+def to_device(batch):
+    return {k: v.cuda() for k, v in batch.items()}
 
 
 @torch.no_grad()
-def evaluate_accuracy(
-    model,
-    tokenizer,
-    dataset,
-    batch_size=8,
-):
-
-    was_training = model.training
+def val_loss(model, data, collate, batch_size):
     model.eval()
-
-    old_padding_side = (
-        tokenizer.padding_side
-    )
-
-    tokenizer.padding_side = "left"
-
-    correct = 0
-    total = 0
-    invalid = 0
-
-    for start in range(
-        0,
-        len(dataset),
-        batch_size,
-    ):
-
-        batch_examples = dataset[
-            start:
-            min(
-                start + batch_size,
-                len(dataset),
-            )
-        ]
-
-        # HF Dataset slicing returns dict of lists
-        n = len(
-            batch_examples["question"]
-        )
-
-        prompts = []
-        gold = []
-
-        for i in range(n):
-
-            example = {
-                key: batch_examples[key][i]
-                for key
-                in batch_examples.keys()
-            }
-
-            prompts.append(
-                build_prompt(example)
-            )
-
-            gold.append(
-                get_answer_letter(example)
-            )
-
-        encoded = tokenizer(
-            prompts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=MAX_LENGTH,
-        )
-
-        encoded = {
-            k: v.cuda()
-            for k, v in encoded.items()
-        }
-
-        input_length = (
-            encoded["input_ids"].shape[1]
-        )
-
-        generated = model.generate(
-            **encoded,
-            max_new_tokens=8,
-            do_sample=False,
-            pad_token_id=(
-                tokenizer.pad_token_id
-            ),
-            eos_token_id=(
-                tokenizer.eos_token_id
-            ),
-        )
-
-        new_tokens = generated[
-            :,
-            input_length:
-        ]
-
-        texts = tokenizer.batch_decode(
-            new_tokens,
-            skip_special_tokens=True,
-        )
-
-        for prediction, answer in zip(
-            texts,
-            gold,
-        ):
-
-            predicted_letter = (
-                parse_answer(prediction)
-            )
-
-            if predicted_letter is None:
-                invalid += 1
-
-            if predicted_letter == answer:
-                correct += 1
-
-            total += 1
-
-    tokenizer.padding_side = (
-        old_padding_side
-    )
-
-    if was_training:
-        model.train()
-
-    return {
-        "accuracy": (
-            correct / total
-            if total > 0
-            else 0.0
-        ),
-        "correct": correct,
-        "total": total,
-        "invalid_predictions": invalid,
-    }
-
-
-# ============================================================
-# Long training
-# ============================================================
-
-def run_experiment(
-    mode,
-    top_k,
-    epochs,
-    batch_size,
-    grad_accum,
-    eval_every,
-    max_optimizer_steps=None,
-    out="outputs/scienceqa/long_run",
-    seed=SEED,
-):
-
-    import pandas as pd
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    set_seed(seed)
-
-    tokenizer = (
-        AutoTokenizer
-        .from_pretrained(
-            MODEL_NAME
-        )
-    )
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = (
-            tokenizer.eos_token
-        )
-
-    train_raw, val_raw, test_raw = (
-        load_scienceqa(seed=seed)
-    )
-
-    train_tok = (
-        tokenize_training_dataset(
-            train_raw,
-            tokenizer,
-        )
-    )
-
-    val_tok = (
-        tokenize_training_dataset(
-            val_raw,
-            tokenizer,
-        )
-    )
-
-    collate_fn = make_collate_fn(
-        tokenizer
-    )
-
-    generator = torch.Generator()
-    generator.manual_seed(seed)
-
-    train_loader = DataLoader(
-        train_tok,
-        batch_size=batch_size,
-        shuffle=True,
-        generator=generator,
-        collate_fn=collate_fn,
-        pin_memory=True,
-    )
-
-    val_loader = DataLoader(
-        val_tok,
-        batch_size=batch_size,
-        shuffle=False,
-        collate_fn=collate_fn,
-        pin_memory=True,
-    )
-
-    # Fixed validation batch
-    # for BA / OUT / entropy diagnostics
-    diagnostic_batch = next(
-        iter(val_loader)
-    )
-
-    print("\nLoading Llama-3.2-3B...")
-
-    model = (
-        AutoModelForCausalLM
-        .from_pretrained(
-            MODEL_NAME,
-            torch_dtype=torch.bfloat16,
-        )
-    )
-
-    model.cuda()
-
-    model.config.use_cache = False
-
-    # Inject MoE-LoRA
-    injected = inject_moe_lora(
-        model,
-        rank=RANK,
-        num_experts=NUM_EXPERTS,
-        top_k=top_k,
-        mode=mode,
-    )
-
-    # Robust to mutate-in-place
-    # or return-model implementations
-    if isinstance(
-        injected,
-        torch.nn.Module,
-    ):
-        model = injected
-
-    # Router parameters
-    gate_params = []
-
-    for module in model.modules():
-
-        if (
-            module.__class__.__name__
-            == "MoELoRALinear"
-        ):
-
-            gate_params.extend(
-                module.gate.parameters()
-            )
-
-    gate_optimizer = torch.optim.SGD(
-        gate_params,
-        lr=GATE_LR,
-    )
-
-    expert_optimizer = RiemannianSGD(
-        model,
-        lr=EXPERT_LR,
-        reg=REG,
-    )
-
-    gate_optimizer.zero_grad()
-    expert_optimizer.zero_grad()
-
-    # ----------------------------------------
-    # Output
-    # ----------------------------------------
-
-    output_dir = Path(out)
-
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    method = (
-        "grsgd"
-        if mode == "moe-riemannian"
-        else "rsgd"
-    )
-
-    run_name = (
-        f"{method}_k{top_k}"
-        f"_e{epochs}"
-        f"_mb{batch_size}"
-        f"_ga{grad_accum}"
-    )
-
-    csv_path = (
-        output_dir
-        / f"{run_name}.csv"
-    )
-
-    summary_path = (
-        output_dir
-        / f"{run_name}_summary.json"
-    )
-
-    history = []
-
-    # ----------------------------------------
-    # Number of steps
-    # ----------------------------------------
-
-    optimizer_steps_per_epoch = (
-        math.ceil(
-            len(train_loader)
-            / grad_accum
-        )
-    )
-
-    natural_total_steps = (
-        optimizer_steps_per_epoch
-        * epochs
-    )
-
-    total_optimizer_steps = (
-        natural_total_steps
-    )
-
-    if max_optimizer_steps is not None:
-        total_optimizer_steps = min(
-            total_optimizer_steps,
-            max_optimizer_steps,
-        )
-
-    print("\n==============================")
-    print(f"Mode            : {mode}")
-    print(f"Experts         : {NUM_EXPERTS}")
-    print(f"Top-K           : {top_k}")
-    print(f"Rank            : {RANK}")
-    print(f"Micro batch     : {batch_size}")
-    print(f"Grad accumulation: {grad_accum}")
-    print(
-        f"Effective batch : "
-        f"{batch_size * grad_accum}"
-    )
-    print(f"Epochs          : {epochs}")
-    print(
-        f"Optimizer steps : "
-        f"{total_optimizer_steps}"
-    )
-    print("==============================\n")
-
-    optimizer_step = 0
-    micro_step = 0
-
-    running_loss = 0.0
-    running_micro_batches = 0
-
-    stop_training = False
-
-    for epoch in range(epochs):
-
-        if stop_training:
-            break
-
-        model.train()
-
-        accum_count = 0
-
-        for batch_idx, batch in enumerate(
-            train_loader
-        ):
-
-            batch = {
-                k: v.cuda(
-                    non_blocking=True
-                )
-                for k, v
-                in batch.items()
-            }
-
-            outputs = model(**batch)
-
-            raw_loss = outputs.loss
-
-            running_loss += (
-                raw_loss.item()
-            )
-
-            running_micro_batches += 1
-
-            # Gradient accumulation
-            loss = (
-                raw_loss
-                / grad_accum
-            )
-
-            loss.backward()
-
-            micro_step += 1
-            accum_count += 1
-
-            is_last_batch = (
-                batch_idx
-                == len(train_loader) - 1
-            )
-
-            boundary = (
-                accum_count == grad_accum
-                or is_last_batch
-            )
-
-            if not boundary:
-                continue
-
-            # Correct last partial
-            # accumulation group
-            if accum_count < grad_accum:
-
-                correction = (
-                    grad_accum
-                    / accum_count
-                )
-
-                for p in model.parameters():
-
-                    if (
-                        p.requires_grad
-                        and p.grad is not None
-                    ):
-                        p.grad.mul_(
-                            correction
-                        )
-
-            optimizer_step += 1
-
-            should_eval = (
-                optimizer_step
-                % eval_every
-                == 0
-                or optimizer_step
-                == total_optimizer_steps
-            )
-
-            # IMPORTANT:
-            # after backward,
-            # before optimizer.step
-            update_cosine = None
-
-            if should_eval:
-
-                update_cosine = (
-                    compute_update_cosine(
-                        model,
-                        reg=REG,
-                    )
-                )
-
-            # Actual update
-            gate_optimizer.step()
-            expert_optimizer.step()
-
-            gate_optimizer.zero_grad()
-            expert_optimizer.zero_grad()
-
-            accum_count = 0
-
-            # --------------------------------
-            # Evaluation + diagnostics
-            # --------------------------------
-
-            if should_eval:
-
-                val_loss = evaluate_loss(
-                    model,
-                    val_loader,
-                )
-
-                diagnostics = (
-                    compute_diagnostics(
-                        model,
-                        diagnostic_batch,
-                    )
-                )
-
-                train_loss = (
-                    running_loss
-                    / max(
-                        running_micro_batches,
-                        1,
-                    )
-                )
-
-                row = {
-                    "epoch": epoch + 1,
-                    "optimizer_step": (
-                        optimizer_step
-                    ),
-                    "micro_step": (
-                        micro_step
-                    ),
-                    "train_loss": (
-                        train_loss
-                    ),
-                    "val_loss": (
-                        val_loss
-                    ),
-                    "update_cosine": (
-                        update_cosine
-                    ),
-                    **diagnostics,
-                }
-
-                history.append(row)
-
-                # Save immediately
-                # in case Colab disconnects
-                pd.DataFrame(
-                    history
-                ).to_csv(
-                    csv_path,
-                    index=False,
-                )
-
-                print(
-                    f"epoch={epoch+1} | "
-                    f"step={optimizer_step:04d} | "
-                    f"train={train_loss:.4f} | "
-                    f"val={val_loss:.4f} | "
-                    f"UPD={update_cosine:.4f} | "
-                    f"BA="
-                    f"{diagnostics['ba_cosine']:.4f} | "
-                    f"OUT="
-                    f"{diagnostics['output_cosine']:.4f} | "
-                    f"H="
-                    f"{diagnostics['gate_entropy_norm']:.4f}"
-                )
-
-                running_loss = 0.0
-                running_micro_batches = 0
-
-            # Smoke-test cutoff
-            if (
-                max_optimizer_steps
-                is not None
-                and optimizer_step
-                >= max_optimizer_steps
-            ):
-
-                stop_training = True
+    loss_sum = token_count = 0
+    for start in range(0, len(data), batch_size):
+        batch = to_device(collate([data[i] for i in range(start, min(start+batch_size, len(data)))]))
+        n = int((batch['labels'][:, 1:] != -100).sum().item())
+        loss = model(**batch).loss.item()
+        if not math.isfinite(loss):
+            raise RuntimeError('Validation loss is not finite.')
+        loss_sum += loss*n
+        token_count += n
+    return loss_sum / token_count
+
+
+@torch.no_grad()
+def accuracy(model, tokenizer, data, batch_size, prediction_path=None):
+    model.eval()
+    rows = []
+    correct = invalid = 0
+    old_side = tokenizer.padding_side
+    tokenizer.padding_side = 'left'
+    try:
+        for start in range(0, len(data), batch_size):
+            examples = [data[i] for i in range(start, min(start+batch_size, len(data)))]
+            enc = tokenizer.pad([{'input_ids': prompt_ids(ex, tokenizer),
+                                  'attention_mask': [1]*len(prompt_ids(ex, tokenizer))}
+                                 for ex in examples], padding=True, return_tensors='pt')
+            enc = to_device(enc)
+            pred = model.generate(**enc, max_new_tokens=10, do_sample=False,
+                                  pad_token_id=tokenizer.pad_token_id,
+                                  eos_token_id=tokenizer.eos_token_id)
+            texts = tokenizer.batch_decode(pred[:, enc['input_ids'].shape[1]:], skip_special_tokens=True)
+            for idx, ex, text in zip(range(start, start+len(examples)), examples, texts):
+                letter = parse_answer(text)
+                gold = chr(65+int(ex['answer']))
+                invalid += int(letter is None)
+                correct += int(letter == gold)
+                rows.append(dict(index=idx, gold=gold, prediction=letter, generated=text))
+    finally:
+        tokenizer.padding_side = old_side
+    if prediction_path is not None:
+        atomic_json(prediction_path, rows)
+    return dict(accuracy=correct/len(data), correct=correct, total=len(data), invalid_predictions=invalid)
+
+
+def save_checkpoint(out, model, gate_opt, expert_opt, cfg, step, epoch, next_batch):
+    # Custom RiemannianSGD has no momentum or other hidden update state.
+    # Save its LR/reg explicitly; gate optimizer has a normal state_dict.
+    payload = dict(config=cfg, step=step, epoch=epoch, next_batch=next_batch,
+                   trainable={n: p.detach().cpu().clone() for n, p in model.named_parameters() if p.requires_grad},
+                   gate_optimizer=gate_opt.state_dict(),
+                   expert_optimizer=dict(lr=expert_opt.lr, reg=expert_opt.reg),
+                   python_rng=random.getstate(), numpy_rng=np.random.get_state(),
+                   torch_rng=torch.get_rng_state(), cuda_rng=torch.cuda.get_rng_state_all())
+    temp = out / 'checkpoint_latest.pt.tmp'
+    torch.save(payload, temp)
+    latest, previous = out/'checkpoint_latest.pt', out/'checkpoint_previous.pt'
+    if latest.exists():
+        os.replace(latest, previous)
+    os.replace(temp, latest)
+    print(f'Checkpoint saved: step={step}, epoch={epoch}, next_batch={next_batch}', flush=True)
+
+
+def load_checkpoint(out, model, gate_opt, expert_opt, cfg):
+    paths = [out/'checkpoint_latest.pt', out/'checkpoint_previous.pt']
+    payload = None
+    for path in paths:
+        if path.exists():
+            try:
+                payload = torch.load(path, map_location='cpu', weights_only=False)
+                print(f'Resuming {path.name} at step {payload["step"]}', flush=True)
                 break
+            except Exception as error:
+                print(f'Cannot read {path.name}: {type(error).__name__}; try previous checkpoint.', flush=True)
+    if payload is None:
+        raise FileNotFoundError('No readable checkpoint; use a new experiment directory to start again.')
+    if payload['config'] != cfg:
+        raise ValueError('Resume config/dependencies/source differ; restore the saved setup or use a new directory.')
+    params = {n: p for n, p in model.named_parameters() if p.requires_grad}
+    if params.keys() != payload['trainable'].keys():
+        raise ValueError('Trainable parameter keys changed.')
+    with torch.no_grad():
+        for n, p in params.items():
+            p.copy_(payload['trainable'][n].to(p.device))
+    gate_opt.load_state_dict(payload['gate_optimizer'])
+    expert_opt.lr = payload['expert_optimizer']['lr']
+    expert_opt.reg = payload['expert_optimizer']['reg']
+    random.setstate(payload['python_rng'])
+    np.random.set_state(payload['numpy_rng'])
+    torch.set_rng_state(payload['torch_rng'])
+    torch.cuda.set_rng_state_all(payload['cuda_rng'])
+    return payload['step'], payload['epoch'], payload['next_batch']
 
-    # ========================================================
-    # Final accuracy
-    # Skip for smoke test
-    # ========================================================
 
-    summary = {
-        "seed": seed,
-        "model": MODEL_NAME,
-        "mode": mode,
-        "num_experts": NUM_EXPERTS,
-        "top_k": top_k,
-        "rank": RANK,
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "grad_accum": grad_accum,
-        "effective_batch": (
-            batch_size * grad_accum
-        ),
-        "optimizer_steps": (
-            optimizer_step
-        ),
-    }
-
-    if max_optimizer_steps is None:
-
-        print(
-            "\nRunning final "
-            "ScienceQA test accuracy..."
-        )
-
-        accuracy_result = (
-            evaluate_accuracy(
-                model,
-                tokenizer,
-                test_raw,
-                batch_size=max(
-                    batch_size,
-                    1,
-                ),
-            )
-        )
-
-        summary.update(
-            accuracy_result
-        )
-
-        print(
-            f"Test accuracy: "
-            f"{accuracy_result['accuracy']:.4f} "
-            f"("
-            f"{accuracy_result['correct']}/"
-            f"{accuracy_result['total']}"
-            f")"
-        )
-
-        print(
-            "Invalid generations:",
-            accuracy_result[
-                "invalid_predictions"
-            ],
-        )
-
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['riemannian', 'moe-riemannian'], required=True)
+    parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--revisions', type=Path, required=True)
+    parser.add_argument('--steps', type=int, default=800)
+    parser.add_argument('--batch-size', type=int, default=2)
+    parser.add_argument('--grad-accum', type=int, default=40)
+    parser.add_argument('--eval-every', type=int, default=100)
+    parser.add_argument('--save-every', type=int, default=50)
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--train-limit', type=int, default=0)
+    parser.add_argument('--val-limit', type=int, default=0)
+    parser.add_argument('--smoke', action='store_true')
+    args = parser.parse_args(argv)
+    if min(args.steps, args.batch_size, args.grad_accum, args.eval_every, args.save_every) < 1:
+        parser.error('Step and batch settings must be positive.')
+    assert torch.cuda.is_available(), 'Choose a GPU runtime.'
+    from datasets import load_dataset
+    from huggingface_hub import HfApi
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    set_seed(args.seed)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    args.out.mkdir(parents=True, exist_ok=True)
+    args.revisions.parent.mkdir(parents=True, exist_ok=True)
+    if not args.revisions.exists():
+        api = HfApi()
+        atomic_json(args.revisions, dict(model=api.model_info(MODEL).sha,
+                                        dataset=api.dataset_info(DATASET).sha))
+    revisions = json.loads(args.revisions.read_text())
+    import moelora_repro.scienceqa.model as source_model
+    import moelora_repro.scienceqa.optimizer as source_opt
+    def sha(path):
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    cfg = dict(protocol=PROTOCOL, mode=args.mode, steps=args.steps, seed=args.seed,
+               batch_size=args.batch_size, grad_accum=args.grad_accum,
+               eval_every=args.eval_every, save_every=args.save_every,
+               train_limit=args.train_limit, val_limit=args.val_limit, smoke=args.smoke,
+               model=MODEL, dataset=DATASET, revisions=revisions,
+               precision='BF16 backbone / FP32 adapters and router',
+               n=N_EXPERTS, k=TOP_K, r=RANK, alpha=ALPHA, dropout=DROPOUT,
+               expert_lr=EXPERT_LR, gate_lr=GATE_LR, reg=REG,
+               scheduler_horizon=SCHEDULER_HORIZON, max_length=MAX_LENGTH, prompt_budget=PROMPT_BUDGET,
+               source_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+               source_hashes=dict(driver=sha(__file__), model=sha(source_model.__file__), optimizer=sha(source_opt.__file__)),
+               packages={p: importlib.metadata.version(p) for p in ['torch', 'transformers', 'datasets', 'numpy', 'accelerate']})
+    config_path = args.out/'config.json'
+    if config_path.exists():
+        if json.loads(config_path.read_text()) != cfg:
+            raise ValueError('Existing experiment has a different config; change EXPERIMENT_ID.')
+        if (args.out/'summary.json').exists():
+            print('Already completed:', (args.out/'summary.json').read_text(), flush=True)
+            return
     else:
-
-        print(
-            "\nSmoke test: "
-            "skipping full test accuracy."
-        )
-
-    with open(
-        summary_path,
-        "w",
-    ) as f:
-
-        json.dump(
-            summary,
-            f,
-            indent=2,
-        )
-
-    print(
-        f"\nSaved history : {csv_path}"
-    )
-
-    print(
-        f"Saved summary : {summary_path}"
-    )
-
+        atomic_json(config_path, cfg)
+    atomic_json(args.out/'environment.json', dict(gpu=torch.cuda.get_device_name(),
+                vram_gb=torch.cuda.get_device_properties(0).total_memory/2**30,
+                cuda=torch.version.cuda, config=cfg))
+    tokenizer = AutoTokenizer.from_pretrained(MODEL, revision=revisions['model'])
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = 'right'
+    ds = load_dataset(DATASET, revision=revisions['dataset'])
+    raw = {split: ds[split].filter(lambda x: x['image'] is None) for split in ['train', 'validation', 'test']}
+    if args.train_limit:
+        raw['train'] = raw['train'].shuffle(seed=args.seed).select(range(min(args.train_limit, len(raw['train']))))
+    if args.val_limit:
+        raw['validation'] = raw['validation'].select(range(min(args.val_limit, len(raw['validation']))))
+    train = raw['train'].map(lambda ex: encode_training(ex, tokenizer), remove_columns=raw['train'].column_names,
+                            load_from_cache_file=False)
+    valid = raw['validation'].map(lambda ex: encode_training(ex, tokenizer), remove_columns=raw['validation'].column_names,
+                                 load_from_cache_file=False)
+    assert len(train) > 0 and len(valid) > 0
+    atomic_json(args.out/'data_audit.json', dict(sizes={k: len(v) for k, v in raw.items()},
+                zero_supervised_rows=sum(not any(y != -100 for y in ex['labels'][1:]) for ex in train),
+                train_prompts_truncated=sum(len(tokenizer(prompt(ex))['input_ids']) > PROMPT_BUDGET for ex in raw['train']),
+                test_prompts_truncated=sum(len(tokenizer(prompt(ex))['input_ids']) > PROMPT_BUDGET for ex in raw['test'])))
+    model = AutoModelForCausalLM.from_pretrained(MODEL, revision=revisions['model'], torch_dtype=torch.bfloat16).cuda()
+    model.config.use_cache = False
+    inject_moe_lora(model, rank=RANK, num_experts=N_EXPERTS, top_k=TOP_K, alpha=ALPHA, mode=args.mode, dropout=DROPOUT)
+    gates = [p for n, p in model.named_parameters() if '.gate.' in n and p.requires_grad]
+    assert len(gates) > 0
+    gate_opt = torch.optim.SGD(gates, lr=GATE_LR)
+    expert_opt = RiemannianSGD(model, lr=EXPERT_LR, reg=REG)
+    collate = make_collate_fn(tokenizer)
+    step = epoch = next_batch = 0
+    if (args.out/'checkpoint_latest.pt').exists() or (args.out/'checkpoint_previous.pt').exists():
+        step, epoch, next_batch = load_checkpoint(args.out, model, gate_opt, expert_opt, cfg)
+    else:
+        save_checkpoint(args.out, model, gate_opt, expert_opt, cfg, step, epoch, next_batch)
+    metrics_path = args.out/'metrics.jsonl'
+    # Remove stale metrics written after an older checkpoint being recovered.
+    if metrics_path.exists():
+        rows = [json.loads(line) for line in metrics_path.read_text().splitlines() if line.strip()]
+        metrics_path.write_text(''.join(json.dumps(row)+'\n' for row in rows if row['step'] <= step))
+    if step == 0:
+        initial = accuracy(model, tokenizer, raw['validation'].select(range(min(128, len(valid)))), args.batch_size)
+        atomic_json(args.out/'baseline_validation.json', initial)
+        print('Initial validation:', initial, flush=True)
+    started = time.perf_counter()
+    first_step = step
+    while step < args.steps:
+        plan = batch_plan(len(train), args.batch_size, args.seed, epoch)
+        model.train()
+        while next_batch < len(plan) and step < args.steps:
+            count = min(args.grad_accum, len(plan)-next_batch)
+            total_loss = 0.0
+            gate_opt.zero_grad(set_to_none=True)
+            expert_opt.zero_grad()
+            for ids in plan[next_batch:next_batch+count]:
+                batch = to_device(collate([train[i] for i in ids]))
+                loss = model(**batch).loss
+                if not torch.isfinite(loss):
+                    raise RuntimeError('Non-finite training loss; inspect data_audit and checkpoint.')
+                total_loss += float(loss.detach())
+                (loss/count).backward()
+            torch.nn.utils.clip_grad_norm_(gates, 1.0)
+            factor = max(0.0, 1.0-step/SCHEDULER_HORIZON)
+            expert_opt.lr = EXPERT_LR*factor
+            for group in gate_opt.param_groups:
+                group['lr'] = GATE_LR*factor
+            expert_opt.step()
+            gate_opt.step()
+            gate_opt.zero_grad(set_to_none=True)
+            expert_opt.zero_grad()
+            step += 1
+            next_batch += count
+            print(f'step={step}/{args.steps} epoch={epoch} loss={total_loss/count:.5f} '
+                  f'expert_lr={expert_opt.lr:.3g} peak_GB={torch.cuda.max_memory_allocated()/2**30:.2f}', flush=True)
+            if step % args.save_every == 0 or step == args.steps:
+                save_checkpoint(args.out, model, gate_opt, expert_opt, cfg, step, epoch, next_batch)
+            if step % args.eval_every == 0 or step == args.steps:
+                row = dict(step=step, epoch=epoch, train_loss=total_loss/count,
+                           validation_loss=val_loss(model, valid, collate, args.batch_size))
+                if not args.smoke:
+                    subset = raw['validation'].select(range(min(256, len(valid))))
+                    row['validation_accuracy_first256'] = accuracy(model, tokenizer, subset, args.batch_size)
+                with metrics_path.open('a') as f:
+                    f.write(json.dumps(row)+'\n')
+                print('Validation:', row, flush=True)
+                model.train()
+        if next_batch == len(plan):
+            epoch += 1
+            next_batch = 0
+    summary = dict(config=cfg, optimizer_steps=step,
+                   elapsed_training_and_validation_seconds=time.perf_counter()-started,
+                   steps_trained_this_session=step-first_step,
+                   peak_gpu_gb=torch.cuda.max_memory_allocated()/2**30)
+    if not args.smoke:
+        print('Final full text-only test evaluation (no test-based checkpoint selection)...', flush=True)
+        summary.update(accuracy(model, tokenizer, raw['test'], args.batch_size, args.out/'test_predictions.json'))
+    else:
+        summary['note'] = 'Smoke test only; no Table 1 accuracy.'
+    atomic_json(args.out/'summary.json', summary)
+    print(json.dumps(summary, indent=2), flush=True)
     del model
-
     gc.collect()
     torch.cuda.empty_cache()
 
 
-# ============================================================
-# CLI
-# ============================================================
-
-def main(argv=None):
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--mode",
-        choices=[
-            "riemannian",
-            "moe-riemannian",
-        ],
-        required=True,
-    )
-
-    parser.add_argument(
-        "--top-k", "--top_k",
-        type=int,
-        default=10,
-    )
-
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=1,
-    )
-
-    parser.add_argument(
-        "--batch-size", "--batch_size",
-        type=int,
-        default=2,
-    )
-
-    parser.add_argument(
-        "--grad-accum", "--grad_accum",
-        type=int,
-        default=4,
-    )
-
-    parser.add_argument(
-        "--eval-every", "--eval_every",
-        type=int,
-        default=200,
-    )
-
-    parser.add_argument(
-        "--max-optimizer-steps", "--max_optimizer_steps",
-        type=int,
-        default=None,
-    )
-
-    parser.add_argument("--out", type=Path, default=Path("outputs/scienceqa/long_run"))
-
-    parser.add_argument("--seed", type=int, default=SEED)
-
-    args = parser.parse_args(argv)
-
-    if not 1 <= args.top_k <= NUM_EXPERTS:
-        parser.error(f"top-k must be between 1 and {NUM_EXPERTS}")
-    if min(args.epochs, args.batch_size, args.grad_accum, args.eval_every) < 1:
-        parser.error("epochs, batch-size, grad-accum and eval-every must be positive")
-    if args.max_optimizer_steps is not None and args.max_optimizer_steps < 1:
-        parser.error("max-optimizer-steps must be positive")
-    if not 0 <= args.seed < 2**32:
-        parser.error("seed must be in [0, 2**32)")
-
-    run_experiment(
-        out=args.out,
-        seed=args.seed,
-        mode=args.mode,
-        top_k=args.top_k,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        grad_accum=args.grad_accum,
-        eval_every=args.eval_every,
-        max_optimizer_steps=(
-            args.max_optimizer_steps
-        ),
-    )
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

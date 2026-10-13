@@ -1,0 +1,10 @@
+{
+  "sizes": {
+    "train": 6508,
+    "validation": 2144,
+    "test": 2224
+  },
+  "zero_supervised_rows": 0,
+  "train_prompts_truncated": 1,
+  "test_prompts_truncated": 0
+}
