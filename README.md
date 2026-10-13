@@ -28,9 +28,14 @@ supervised answer tokens.
 | gRSGD | 70.1% | **69.24%** | −0.86 pp | 1,540 / 2,224 |
 
 Observed improvement: **6.70 percentage points**.
-This is one seed on the text-only subset and a documented protocol variant;
-it is not reproduction of the whole Table 1 or a multi-seed uncertainty estimate.
-Nearby scores alone do not establish an identical evaluation protocol.
+This single-seed study targets the **ScienceQA RSGD/gRSGD comparison in Table 1**.
+The text-only filter follows the authors' published
+[data preparation code](https://github.com/THUDM/MoELoRA_Riemannian/blob/e5c69a0050f3365b2e97343009904a8bd9437eca/prepare_data.py#L118),
+which also keeps only examples with `image == None`.
+Coverage is limited to these two ScienceQA SGD rows: the other QA datasets and
+AdamW rows in Table 1 have not been reproduced. There is no multi-seed
+uncertainty estimate. The training/evaluation pipeline is independently
+implemented, so nearby scores alone do not verify every protocol detail.
 
 Evidence: [comparison CSV](results/scienceqa/comparison.csv),
 [RSGD](results/scienceqa/runs/rsgd_seed42/summary.json),
