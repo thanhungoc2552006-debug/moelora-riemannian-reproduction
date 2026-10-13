@@ -36,7 +36,10 @@ Helper/import changes alter hashes, so new executions are new runs.
 - One seed provides no multi-seed uncertainty estimate.
 - Nearby accuracy and some matching hyperparameters do not establish an
   identical paper evaluation protocol.
-- Image-dependent examples are excluded.
+- Image-dependent examples are excluded, following the authors' published
+  [preparation filter](https://github.com/THUDM/MoELoRA_Riemannian/blob/e5c69a0050f3365b2e97343009904a8bd9437eca/prepare_data.py#L118).
+  Text-only filtering is therefore aligned with their released code; it is not
+  itself a discrepancy from the published ScienceQA preparation pipeline.
 - Archived metric histories have gaps; plots use recorded points only.
 - FP16 functional probes differ from BF16 training; probe source is not supplied.
 - Checkpoint save/load exists, but exact uninterrupted/resumed equivalence
